@@ -1,0 +1,230 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="AutoImportSettings">
+    <option name="autoReloadType" value="SELECTIVE" />
+  </component>
+  <component name="BranchesTreeState">
+    <expand>
+      <path>
+        <item name="ROOT" type="e8cecc67:BranchNodeDescriptor" />
+        <item name="LOCAL_ROOT" type="e8cecc67:BranchNodeDescriptor" />
+      </path>
+    </expand>
+    <select />
+  </component>
+  <component name="CMakeRunConfigurationManager" shouldGenerate="true" shouldDeleteObsolete="true">
+    <generated />
+  </component>
+  <component name="CMakeSettings">
+    <configurations>
+      <configuration PROFILE_NAME="Debug" CONFIG_NAME="Debug" />
+    </configurations>
+  </component>
+  <component name="CargoProjects">
+    <cargoProject FILE="$PROJECT_DIR$/Cargo.toml" />
+  </component>
+  <component name="ChangeListManager">
+    <list default="true" id="41bd6403-9ec0-4b88-b071-e0f5940288a7" name="Default Changelist" comment="">
+      <change afterPath="$PROJECT_DIR$/query.sql" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/main.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/proxy/bridge.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/proxy/config.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/proxy/crypto.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/proxy/initial_handler.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/proxy/logger.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/proxy/mod.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/proxy/proxy.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/proxy/session.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/proxy/util.rs" afterDir="false" />
+    </list>
+    <option name="SHOW_DIALOG" value="false" />
+    <option name="HIGHLIGHT_CONFLICTS" value="true" />
+    <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
+    <option name="LAST_RESOLUTION" value="IGNORE" />
+  </component>
+  <component name="ClangdSettings">
+    <option name="formatViaClangd" value="false" />
+  </component>
+  <component name="FileTemplateManagerImpl">
+    <option name="RECENT_TEMPLATES">
+      <list>
+        <option value="Rust File" />
+      </list>
+    </option>
+  </component>
+  <component name="Git.Settings">
+    <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
+  </component>
+  <component name="MacroExpansionManager">
+    <option name="directoryName" value="mi7llwzm" />
+  </component>
+  <component name="ProjectId" id="1iEh30PxF9CQga6CCcnInxMJIoZ" />
+  <component name="ProjectViewState">
+    <option name="hideEmptyMiddlePackages" value="true" />
+    <option name="showLibraryContents" value="true" />
+  </component>
+  <component name="PropertiesComponent">
+    <property name="RunOnceActivity.OpenProjectViewOnStart" value="true" />
+    <property name="WebServerToolWindowFactoryState" value="false" />
+    <property name="cf.first.check.clang-format" value="false" />
+    <property name="last_opened_file_path" value="$PROJECT_DIR$/src" />
+    <property name="nodejs_package_manager_path" value="npm" />
+    <property name="org.rust.cargo.project.model.PROJECT_DISCOVERY" value="true" />
+  </component>
+  <component name="RecentsManager">
+    <key name="MoveFile.RECENT_KEYS">
+      <recent name="$PROJECT_DIR$/src/proxy" />
+    </key>
+    <key name="CopyFile.RECENT_KEYS">
+      <recent name="$PROJECT_DIR$/src" />
+    </key>
+  </component>
+  <component name="RunManager" selected="Cargo.Run">
+    <configuration name="Expand rustcord" type="CargoCommandRunConfiguration" factoryName="Cargo Command" temporary="true">
+      <option name="channel" value="DEFAULT" />
+      <option name="command" value="expand --bin rustcord --color=always --theme=GitHub --tests" />
+      <option name="allFeatures" value="false" />
+      <option name="emulateTerminal" value="false" />
+      <option name="backtrace" value="SHORT" />
+      <option name="workingDirectory" value="file://$PROJECT_DIR$" />
+      <envs />
+      <method v="2">
+        <option name="CARGO.BUILD_TASK_PROVIDER" enabled="true" />
+      </method>
+    </configuration>
+    <configuration name="Run" type="CargoCommandRunConfiguration" factoryName="Cargo Command">
+      <option name="channel" value="DEFAULT" />
+      <option name="command" value="run --package rustcord --bin rustcord" />
+      <option name="allFeatures" value="false" />
+      <option name="emulateTerminal" value="false" />
+      <option name="backtrace" value="SHORT" />
+      <option name="workingDirectory" value="file://$PROJECT_DIR$" />
+      <envs />
+      <method v="2">
+        <option name="CARGO.BUILD_TASK_PROVIDER" enabled="true" />
+      </method>
+    </configuration>
+    <configuration default="true" type="GradleAppRunConfiguration" factoryName="Application" REDIRECT_INPUT="false" PASS_PARENT_ENVS_2="true">
+      <method v="2">
+        <option name="com.jetbrains.cidr.cpp.gradle.execution.GradleNativeBuildBeforeRunTaskProvider$BuildBeforeRunTask" enabled="true" />
+      </method>
+    </configuration>
+    <recent_temporary>
+      <list>
+        <item itemvalue="Cargo.Expand rustcord" />
+      </list>
+    </recent_temporary>
+  </component>
+  <component name="RustProjectSettings">
+    <option name="toolchainHomeDirectory" value="$USER_HOME$/.cargo/bin" />
+    <option name="version" value="2" />
+  </component>
+  <component name="SpellCheckerSettings" RuntimeDictionaries="0" Folders="0" CustomDictionaries="0" DefaultDictionary="application-level" UseSingleDictionary="true" transferred="true" />
+  <component name="TaskManager">
+    <task active="true" id="Default" summary="Default task">
+      <changelist id="41bd6403-9ec0-4b88-b071-e0f5940288a7" name="Default Changelist" comment="" />
+      <created>1601478455159</created>
+      <option name="number" value="Default" />
+      <option name="presentableId" value="Default" />
+      <updated>1601478455159</updated>
+      <workItem from="1601478456295" duration="84000" />
+      <workItem from="1601478570848" duration="11618000" />
+      <workItem from="1601491175122" duration="31401000" />
+      <workItem from="1601560622133" duration="421000" />
+    </task>
+    <servers />
+  </component>
+  <component name="TypeScriptGeneratedFilesManager">
+    <option name="version" value="3" />
+  </component>
+  <component name="Vcs.Log.Tabs.Properties">
+    <option name="TAB_STATES">
+      <map>
+        <entry key="MAIN">
+          <value>
+            <State />
+          </value>
+        </entry>
+      </map>
+    </option>
+    <option name="oldMeFiltersMigrated" value="true" />
+  </component>
+  <component name="WindowStateProjectService">
+    <state x="1068" y="143" width="378" height="564" key="#com.intellij.ide.util.MemberChooser" timestamp="1601512348683">
+      <screen x="0" y="0" width="2560" height="1440" />
+    </state>
+    <state x="1068" y="143" width="378" height="564" key="#com.intellij.ide.util.MemberChooser/0.0.2560.1440/2560.0.2560.1440@0.0.2560.1440" timestamp="1601512348683" />
+    <state x="382" y="412" width="528" height="505" key="#com.intellij.refactoring.safeDelete.UnsafeUsagesDialog" timestamp="1601506605276">
+      <screen x="0" y="0" width="2560" height="1440" />
+    </state>
+    <state x="382" y="412" width="528" height="505" key="#com.intellij.refactoring.safeDelete.UnsafeUsagesDialog/0.0.2560.1440/2560.0.2560.1440@0.0.2560.1440" timestamp="1601506605276" />
+    <state x="1036" y="437" key="#xdebugger.evaluate" timestamp="1601500474835">
+      <screen x="0" y="0" width="2560" height="1440" />
+    </state>
+    <state x="1036" y="437" key="#xdebugger.evaluate/0.0.2560.1440/2560.0.2560.1440@0.0.2560.1440" timestamp="1601500474835" />
+    <state width="2446" height="380" key="GridCell.Tab.0.bottom" timestamp="1601522362681">
+      <screen x="0" y="0" width="2560" height="1440" />
+    </state>
+    <state width="2446" height="380" key="GridCell.Tab.0.bottom/0.0.2560.1440/2560.0.2560.1440@0.0.2560.1440" timestamp="1601522362681" />
+    <state width="2446" height="380" key="GridCell.Tab.0.center" timestamp="1601522362681">
+      <screen x="0" y="0" width="2560" height="1440" />
+    </state>
+    <state width="2446" height="380" key="GridCell.Tab.0.center/0.0.2560.1440/2560.0.2560.1440@0.0.2560.1440" timestamp="1601522362681" />
+    <state width="2446" height="380" key="GridCell.Tab.0.left" timestamp="1601522362681">
+      <screen x="0" y="0" width="2560" height="1440" />
+    </state>
+    <state width="2446" height="380" key="GridCell.Tab.0.left/0.0.2560.1440/2560.0.2560.1440@0.0.2560.1440" timestamp="1601522362681" />
+    <state width="2446" height="380" key="GridCell.Tab.0.right" timestamp="1601522362681">
+      <screen x="0" y="0" width="2560" height="1440" />
+    </state>
+    <state width="2446" height="380" key="GridCell.Tab.0.right/0.0.2560.1440/2560.0.2560.1440@0.0.2560.1440" timestamp="1601522362681" />
+    <state width="1192" height="468" key="GridCell.Tab.1.bottom" timestamp="1601517354993">
+      <screen x="0" y="0" width="2560" height="1440" />
+    </state>
+    <state width="1192" height="468" key="GridCell.Tab.1.bottom/0.0.2560.1440/2560.0.2560.1440@0.0.2560.1440" timestamp="1601517354993" />
+    <state width="1192" height="468" key="GridCell.Tab.1.center" timestamp="1601517354993">
+      <screen x="0" y="0" width="2560" height="1440" />
+    </state>
+    <state width="1192" height="468" key="GridCell.Tab.1.center/0.0.2560.1440/2560.0.2560.1440@0.0.2560.1440" timestamp="1601517354993" />
+    <state width="1192" height="468" key="GridCell.Tab.1.left" timestamp="1601517354993">
+      <screen x="0" y="0" width="2560" height="1440" />
+    </state>
+    <state width="1192" height="468" key="GridCell.Tab.1.left/0.0.2560.1440/2560.0.2560.1440@0.0.2560.1440" timestamp="1601517354993" />
+    <state width="1192" height="468" key="GridCell.Tab.1.right" timestamp="1601517354993">
+      <screen x="0" y="0" width="2560" height="1440" />
+    </state>
+    <state width="1192" height="468" key="GridCell.Tab.1.right/0.0.2560.1440/2560.0.2560.1440@0.0.2560.1440" timestamp="1601517354993" />
+    <state x="1008" y="344" width="534" height="702" key="com.intellij.openapi.editor.actions.MultiplePasteAction$ClipboardContentChooser" timestamp="1601479049340">
+      <screen x="0" y="0" width="2560" height="1440" />
+    </state>
+    <state x="1008" y="344" width="534" height="702" key="com.intellij.openapi.editor.actions.MultiplePasteAction$ClipboardContentChooser/0.0.2560.1440/2560.0.2560.1440@0.0.2560.1440" timestamp="1601479049340" />
+    <state x="974" y="457" width="611" height="534" key="find.popup" timestamp="1601519511525">
+      <screen x="0" y="0" width="2560" height="1440" />
+    </state>
+    <state x="974" y="457" width="611" height="534" key="find.popup/0.0.2560.1440/2560.0.2560.1440@0.0.2560.1440" timestamp="1601519511525" />
+    <state x="942" y="338" key="run.anything.popup" timestamp="1601511678371">
+      <screen x="0" y="0" width="2560" height="1440" />
+    </state>
+    <state x="942" y="338" key="run.anything.popup/0.0.2560.1440/2560.0.2560.1440@0.0.2560.1440" timestamp="1601511678371" />
+    <state x="943" y="351" width="672" height="678" key="search.everywhere.popup" timestamp="1601515197716">
+      <screen x="0" y="0" width="2560" height="1440" />
+    </state>
+    <state x="943" y="351" width="672" height="678" key="search.everywhere.popup/0.0.2560.1440/2560.0.2560.1440@0.0.2560.1440" timestamp="1601515197716" />
+  </component>
+  <component name="XDebuggerManager">
+    <breakpoint-manager>
+      <breakpoints>
+        <line-breakpoint enabled="true" type="com.jetbrains.cidr.execution.debugger.OCBreakpointType">
+          <url>file://$PROJECT_DIR$/src/proxy/initial_handler.rs</url>
+          <line>38</line>
+          <option name="timeStamp" value="10" />
+        </line-breakpoint>
+        <line-breakpoint enabled="true" type="com.jetbrains.cidr.execution.debugger.OCBreakpointType">
+          <url>file://$PROJECT_DIR$/src/proxy/bridge.rs</url>
+          <line>182</line>
+          <option name="timeStamp" value="29" />
+        </line-breakpoint>
+      </breakpoints>
+    </breakpoint-manager>
+  </component>
+</project>

@@ -1,0 +1,29 @@
+[package]
+name = "rustcord"
+version = "0.1.0"
+authors = ["Joey Sacchini <joey@sacchini.net>"]
+edition = "2018"
+license = "APACHE 2.0"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+mcproto-rs = { git = "https://github.com/Twister915/mcproto-rs", branch = "master" }
+tokio = { version = "0.2", features = ["full"] }
+chrono = "0.4.19"
+anyhow = "1.0"
+futures = "0.3.5"
+cfb8 = "0.5.0"
+aes = "0.5.0"
+flate2 = "1.0.17"
+async-trait = "0.1.40"
+pin-project = "0.4.24"
+reqwest = { version = "0.10", features = ["json"] }
+serde = { version = "1.0.116", features = ["derive"] }
+serde_json = "1.0"
+rsa = "0.2"
+rsa-der = "0.2"
+rust-crypto = "0.2.36"
+rand = "0.7"
+base64 = "0.12.3"
+num-bigint-dig = "0.6.0"
