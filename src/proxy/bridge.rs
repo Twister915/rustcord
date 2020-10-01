@@ -1,24 +1,28 @@
-use super::{ReadStream, WriteStream};
 use super::crypto::{DecryptReader, EncryptWriter};
-use mcproto_rs::v1_15_2::{State, PacketDirection, Id, Packet578 as Packet};
-use std::net::SocketAddr;
-use anyhow::{Result, anyhow};
-use flate2::read::{ZlibDecoder};
-use mcproto_rs::{Deserialized, Deserialize, Serializer, Serialize};
-use mcproto_rs::types::{VarInt, BytesSerializer};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use mcproto_rs::protocol::{RawPacket, Packet as PacketTrait};
-use flate2::write::{ZlibEncoder};
+use super::{ReadStream, WriteStream};
+use anyhow::{anyhow, Result};
+use flate2::read::ZlibDecoder;
+use flate2::write::ZlibEncoder;
 use flate2::Compression;
-use std::io::{Read, Write, Cursor};
+use mcproto_rs::protocol::{Packet as PacketTrait, RawPacket};
+use mcproto_rs::types::{BytesSerializer, VarInt};
+use mcproto_rs::v1_15_2::{Id, Packet578 as Packet, PacketDirection, State};
+use mcproto_rs::{Deserialize, Deserialized, Serialize, Serializer};
+use std::io::{Cursor, Read, Write};
+use std::net::SocketAddr;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
 #[macro_export]
 macro_rules! read_check_closed {
-    ($e:expr $(,)?) => (match $e.await? {
-        PacketNext::Read(raw) => raw,
-        PacketNext::Closed => { return Err(anyhow!("connection closed")); }
-    })
+    ($e:expr $(,)?) => {
+        match $e.await? {
+            PacketNext::Read(raw) => raw,
+            PacketNext::Closed => {
+                return Err(anyhow!("connection closed"));
+            }
+        }
+    };
 }
 
 #[macro_export]
@@ -50,14 +54,30 @@ pub struct WriteBridge {
     stream: Box<dyn WriteStream>,
     compression_threshold: Option<usize>,
     remote: SocketAddr,
-    zlib_buf: Option<Vec<u8>>
+    zlib_buf: Option<Vec<u8>>,
 }
 
 impl Bridge {
-    pub fn initial(read_direction: PacketDirection, connection: TcpStream, remote: SocketAddr) -> Self {
+    pub fn initial(
+        read_direction: PacketDirection,
+        connection: TcpStream,
+        remote: SocketAddr,
+    ) -> Self {
         let (read_tcp, write_tcp) = connection.into_split();
-        let reader = ReadBridge { stream: Box::new(read_tcp), state: State::Handshaking, direction: read_direction, compression_threshold: None, remote, zlib_decoder: None };
-        let writer = WriteBridge { stream: Box::new(write_tcp), compression_threshold: None, remote, zlib_buf: None };
+        let reader = ReadBridge {
+            stream: Box::new(read_tcp),
+            state: State::Handshaking,
+            direction: read_direction,
+            compression_threshold: None,
+            remote,
+            zlib_decoder: None,
+        };
+        let writer = WriteBridge {
+            stream: Box::new(write_tcp),
+            compression_threshold: None,
+            remote,
+            zlib_buf: None,
+        };
         let stream = Some((reader, writer));
         Self {
             encryption_enabled: false,
@@ -67,7 +87,10 @@ impl Bridge {
     }
 
     pub fn split(&mut self) -> (&mut ReadBridge, &mut WriteBridge) {
-        let (ref mut read_stream, ref mut write_stream) = self.stream.as_mut().expect("connection should always be present");
+        let (ref mut read_stream, ref mut write_stream) = self
+            .stream
+            .as_mut()
+            .expect("connection should always be present");
         (read_stream, write_stream)
     }
 
@@ -76,22 +99,34 @@ impl Bridge {
     }
 
     pub async fn read_packet(&mut self) -> Result<PacketNext<RawPacket<Id>>> {
-        let (ref mut read_stream, _) = self.stream.as_mut().expect("connection should always be present");
+        let (ref mut read_stream, _) = self
+            .stream
+            .as_mut()
+            .expect("connection should always be present");
         read_stream.read_packet().await
     }
 
     pub async fn write_raw_packet(&mut self, raw_packet: RawPacket<Id>) -> Result<()> {
-        let (_, ref mut write_stream) = self.stream.as_mut().expect("connection should always be present");
+        let (_, ref mut write_stream) = self
+            .stream
+            .as_mut()
+            .expect("connection should always be present");
         write_stream.write_raw_packet(raw_packet).await
     }
 
     pub async fn write_packet_bytes(&mut self, raw_body_data: Vec<u8>) -> Result<()> {
-        let (_, ref mut write_stream) = self.stream.as_mut().expect("connection should always be present");
+        let (_, ref mut write_stream) = self
+            .stream
+            .as_mut()
+            .expect("connection should always be present");
         write_stream.write_packet_bytes(raw_body_data).await
     }
 
     pub async fn write_packet(&mut self, packet: Packet) -> Result<()> {
-        let (_, ref mut write_stream) = self.stream.as_mut().expect("connection should always be present");
+        let (_, ref mut write_stream) = self
+            .stream
+            .as_mut()
+            .expect("connection should always be present");
         write_stream.write_packet(packet).await
     }
 
@@ -107,14 +142,14 @@ impl Bridge {
                 direction: read_direction,
                 compression_threshold: r_compression_threshold,
                 remote: r_remote,
-                zlib_decoder
+                zlib_decoder,
             },
             WriteBridge {
                 stream: write_stream,
                 compression_threshold: w_compression_threshold,
                 remote: w_remote,
-                zlib_buf
-            }
+                zlib_buf,
+            },
         ) = self.stream.take().expect("connection must exist always");
 
         let read_bridge = ReadBridge {
@@ -130,7 +165,7 @@ impl Bridge {
             stream: Box::new(EncryptWriter::wrap(write_stream, key, iv)?),
             compression_threshold: w_compression_threshold,
             remote: w_remote,
-            zlib_buf
+            zlib_buf,
         };
 
         self.stream = Some((read_bridge, write_bridge));
@@ -176,7 +211,10 @@ impl ReadBridge {
         }
 
         let data = if let Some(threshold) = self.compression_threshold.as_ref() {
-            let Deserialized { value: raw_data_len, data } = VarInt::mc_deserialize(data.as_slice())?;
+            let Deserialized {
+                value: raw_data_len,
+                data,
+            } = VarInt::mc_deserialize(data.as_slice())?;
             let data_len: usize = raw_data_len.into();
             let data_vec = data.to_vec();
             // packet is not compressed
@@ -184,7 +222,11 @@ impl ReadBridge {
                 data_vec
             } else {
                 if data_len < *threshold {
-                    return Err(anyhow!("deserialize decompress below threshold {} < {}", raw_data_len, threshold));
+                    return Err(anyhow!(
+                        "deserialize decompress below threshold {} < {}",
+                        raw_data_len,
+                        threshold
+                    ));
                 }
 
                 let mut decompressed = vec![0u8; raw_data_len.into()];
@@ -204,7 +246,10 @@ impl ReadBridge {
             data
         };
 
-        let Deserialized { value: packet_id, data } = VarInt::mc_deserialize(data.as_slice())?;
+        let Deserialized {
+            value: packet_id,
+            data,
+        } = VarInt::mc_deserialize(data.as_slice())?;
 
         Ok(PacketNext::Read(RawPacket {
             data: data.to_vec(),
@@ -223,7 +268,10 @@ impl ReadBridge {
 
         while has_more {
             if len == 5 {
-                return Err(anyhow!("cannot deserialize VarInt, exceeds 5 bytes {:?}", buf.to_vec()));
+                return Err(anyhow!(
+                    "cannot deserialize VarInt, exceeds 5 bytes {:?}",
+                    buf.to_vec()
+                ));
             }
 
             let n_read = self.stream.read(&mut buf[len..len + 1]).await?;
@@ -256,7 +304,8 @@ impl WriteBridge {
                 out.into_bytes()
             },
             id: packet.id(),
-        }).await
+        })
+        .await
     }
 
     pub async fn write_raw_packet(&mut self, raw_packet: RawPacket<Id>) -> Result<()> {
@@ -266,7 +315,8 @@ impl WriteBridge {
             out.serialize_other(&id)?;
             out.serialize_bytes(raw_packet.data.as_slice())?;
             out.into_bytes()
-        }).await
+        })
+        .await
     }
 
     pub async fn write_packet_bytes(&mut self, raw_body_data: Vec<u8>) -> Result<()> {

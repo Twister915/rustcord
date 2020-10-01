@@ -15,5 +15,5 @@ pub struct TargetServerSpec {
     pub address: String,
     pub name: String,
     pub use_motd: bool,
-    pub connect_to: bool
+    pub connect_to: bool,
 }

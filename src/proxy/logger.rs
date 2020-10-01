@@ -1,16 +1,16 @@
-use std::fmt;
 use chrono::Local;
+use std::fmt;
 use std::process::exit;
 
 #[derive(Copy, Clone, Debug)]
 pub struct Logger {
     min_print_level: Level,
-    default_level: Option<Level>
+    default_level: Option<Level>,
 }
 
 impl Logger {
     pub fn new(min_print_level: Level) -> Self {
-        Self{
+        Self {
             min_print_level,
             default_level: None,
         }
@@ -56,7 +56,8 @@ impl Logger {
                 "[{} @ {}]: {}",
                 level,
                 Local::now().format("%D %r"),
-                fmt::format(args));
+                fmt::format(args)
+            );
 
             if level >= Level::Warning {
                 eprintln!("{}", line);
@@ -74,7 +75,7 @@ pub enum Level {
     Warning,
     Info,
     Debug,
-    Trace
+    Trace,
 }
 
 impl fmt::Display for Level {

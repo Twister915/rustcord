@@ -1,9 +1,9 @@
-use crypto::sha1::Sha1;
-use crypto::digest::Digest;
-use mcproto_rs::utils::hex;
-use serde::{Serialize, Deserialize};
 use anyhow::Result;
+use crypto::digest::Digest;
+use crypto::sha1::Sha1;
+use mcproto_rs::utils::hex;
 use mcproto_rs::uuid::UUID4;
+use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct HasJoinedRequest {
@@ -28,11 +28,12 @@ pub struct UserProperty {
 
 impl HasJoinedRequest {
     pub async fn send(self, client: &reqwest::Client) -> Result<HasJoinedResponse> {
-        Ok(client.get("https://sessionserver.mojang.com/session/minecraft/hasJoined")
+        Ok(client
+            .get("https://sessionserver.mojang.com/session/minecraft/hasJoined")
             .query(&[
                 ("username", self.username.as_str()),
                 ("ip", self.ip.as_str()),
-                ("serverId", self.hash.into_hash_string().as_str())
+                ("serverId", self.hash.into_hash_string().as_str()),
             ])
             .send()
             .await?
@@ -51,7 +52,9 @@ pub struct ServerHashComponents {
 impl ServerHashComponents {
     pub fn into_hash_string(self) -> String {
         let server_id_bytes = self.server_id.as_bytes();
-        let mut data = Vec::with_capacity(server_id_bytes.len() + self.shared_secret.len() + self.public_key.len());
+        let mut data = Vec::with_capacity(
+            server_id_bytes.len() + self.shared_secret.len() + self.public_key.len(),
+        );
         data.extend_from_slice(server_id_bytes);
         data.extend(self.shared_secret.iter());
         data.extend(self.public_key.iter());
@@ -107,8 +110,17 @@ mod tests {
 
     #[test]
     pub fn calc_hashes() {
-        assert_eq!("-7c9d5b0044c130109a5d7b5fb5c317c02b4e28c1", mc_sha1("jeb_".as_bytes()));
-        assert_eq!("4ed1f46bbe04bc756bcb17c0c7ce3e4632f06a48", mc_sha1("Notch".as_bytes()));
-        assert_eq!("88e16a1019277b15d58faf0541e11910eb756f6", mc_sha1("simon".as_bytes()));
+        assert_eq!(
+            "-7c9d5b0044c130109a5d7b5fb5c317c02b4e28c1",
+            mc_sha1("jeb_".as_bytes())
+        );
+        assert_eq!(
+            "4ed1f46bbe04bc756bcb17c0c7ce3e4632f06a48",
+            mc_sha1("Notch".as_bytes())
+        );
+        assert_eq!(
+            "88e16a1019277b15d58faf0541e11910eb756f6",
+            mc_sha1("simon".as_bytes())
+        );
     }
 }

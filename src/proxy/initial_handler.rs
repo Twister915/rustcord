@@ -1,18 +1,18 @@
-use super::{Proxy, session};
-use crate::{read_check_closed, read_parse};
 use super::bridge::{Bridge, PacketNext};
+use super::{session, Proxy};
+use crate::{read_check_closed, read_parse};
 
-use mcproto_rs::protocol::{Packet as PacketTrait};
-use mcproto_rs::v1_15_2::{HandshakeSpec, Packet578 as Packet, LoginStartSpec, PlayDisconnectSpec};
-use tokio::task::JoinHandle;
-use anyhow::{Result, anyhow};
-use rand::Rng;
+use crate::proxy::proxy::{AddPlayerStatus, Player};
 use crate::proxy::session::HasJoinedResponse;
-use mcproto_rs::uuid::UUID4;
-use mcproto_rs::types::VarInt;
-use crate::proxy::proxy::{Player, AddPlayerStatus};
-use mcproto_rs::v1_15_2::Packet578::PlayDisconnect;
 use crate::proxy::UnexpectedPacketErr;
+use anyhow::{anyhow, Result};
+use mcproto_rs::protocol::Packet as PacketTrait;
+use mcproto_rs::types::VarInt;
+use mcproto_rs::uuid::UUID4;
+use mcproto_rs::v1_15_2::Packet578::PlayDisconnect;
+use mcproto_rs::v1_15_2::{HandshakeSpec, LoginStartSpec, Packet578 as Packet, PlayDisconnectSpec};
+use rand::Rng;
+use tokio::task::JoinHandle;
 
 pub struct InitialUpstreamHandler {
     proxy: Proxy,
@@ -37,15 +37,21 @@ impl InitialUpstreamHandler {
         tokio::spawn(async move {
             let result = self.do_initial_handle().await;
             match result {
-                Ok(Some(player)) => {
-                    match player.connect_to_initial_downstream().await {
-                        Ok(()) => {},
-                        Err(err) => self.proxy.logger().warning(format_args!("error with connected player {} :: {}", self.get_name(), err))
-                    }
+                Ok(Some(player)) => match player.connect_to_initial_downstream().await {
+                    Ok(()) => {}
+                    Err(err) => self.proxy.logger().warning(format_args!(
+                        "error with connected player {} :: {}",
+                        self.get_name(),
+                        err
+                    )),
                 },
                 Err(err) => {
-                    self.proxy.logger().warning(format_args!("for {} failed to handle connection :: {:?}", self.get_name(), err));
-                },
+                    self.proxy.logger().warning(format_args!(
+                        "for {} failed to handle connection :: {:?}",
+                        self.get_name(),
+                        err
+                    ));
+                }
                 _ => {}
             }
         })
@@ -53,7 +59,12 @@ impl InitialUpstreamHandler {
 
     async fn do_initial_handle(&mut self) -> Result<Option<Player>> {
         use Packet::Handshake;
-        match read_parse!(self.connection.as_mut().expect("need connection").read_packet()) {
+        match read_parse!(self
+            .connection
+            .as_mut()
+            .expect("need connection")
+            .read_packet())
+        {
             Handshake(spec) => {
                 let next_state = spec.next_state.clone();
                 self.handshake = Some(spec);
@@ -67,17 +78,24 @@ impl InitialUpstreamHandler {
                     }
                 }
             }
-            packet => { return Err(UnexpectedPacketErr { packet }.into()); }
+            packet => {
+                return Err(UnexpectedPacketErr { packet }.into());
+            }
         }
     }
 
     async fn handle_status(&mut self) -> Result<()> {
-        use Packet::{StatusRequest, StatusResponse, StatusPing, StatusPong};
-        use mcproto_rs::v1_15_2::{StatusResponseSpec, StatusPingSpec, StatusPongSpec, State::Status};
         use mcproto_rs::status::*;
         use mcproto_rs::types::Chat;
+        use mcproto_rs::v1_15_2::{
+            State::Status, StatusPingSpec, StatusPongSpec, StatusResponseSpec,
+        };
+        use Packet::{StatusPing, StatusPong, StatusRequest, StatusResponse};
 
-        let mut connection = self.connection.take().expect("connection should always be present");
+        let mut connection = self
+            .connection
+            .take()
+            .expect("connection should always be present");
 
         connection.set_state(Status);
 
@@ -97,12 +115,22 @@ impl InitialUpstreamHandler {
                 players: StatusPlayersSpec {
                     online: players.len() as i32,
                     max: config.max_players as i32,
-                    sample: players.iter().map(move |player| StatusPlayerSampleSpec {
-                        id: player.id.clone(),
-                        name: player.username.clone(),
-                    }).take(5).collect(),
+                    sample: players
+                        .iter()
+                        .map(move |player| StatusPlayerSampleSpec {
+                            id: player.id.clone(),
+                            name: player.username.clone(),
+                        })
+                        .take(5)
+                        .collect(),
                 },
-                description: Chat::from_text(config.motd.clone().unwrap_or("A Rust Minecraft Proxy".to_owned()).as_str()),
+                description: Chat::from_text(
+                    config
+                        .motd
+                        .clone()
+                        .unwrap_or("A Rust Minecraft Proxy".to_owned())
+                        .as_str(),
+                ),
                 favicon: None,
                 version: StatusVersionSpec {
                     name: "mcprox-rs 1.15.2".to_owned(),
@@ -111,42 +139,54 @@ impl InitialUpstreamHandler {
             }
         };
 
-        connection.write_packet(StatusResponse(StatusResponseSpec { response })).await?;
+        connection
+            .write_packet(StatusResponse(StatusResponseSpec { response }))
+            .await?;
 
         let StatusPingSpec { payload } = {
             use super::bridge::PacketNext::*;
 
             match connection.read_packet().await? {
-                Read(packet) => {
-                    match Packet::mc_deserialize(packet)? {
-                        StatusPing(ping) => {
-                            ping
-                        }
-                        packet => {
-                            return Err(UnexpectedPacketErr { packet }.into());
-                        }
+                Read(packet) => match Packet::mc_deserialize(packet)? {
+                    StatusPing(ping) => ping,
+                    packet => {
+                        return Err(UnexpectedPacketErr { packet }.into());
                     }
-                }
+                },
                 Closed => {
                     return Ok(());
                 }
             }
         };
 
-        connection.write_packet(StatusPong(StatusPongSpec { payload })).await
+        connection
+            .write_packet(StatusPong(StatusPongSpec { payload }))
+            .await
     }
 
     async fn handle_login(&mut self) -> Result<Option<Player>> {
-        use Packet::{LoginStart, LoginEncryptionRequest, LoginEncryptionResponse, LoginSuccess, LoginDisconnect, LoginSetCompression};
-        use mcproto_rs::v1_15_2::{LoginEncryptionRequestSpec, LoginSuccessSpec, LoginDisconnectSpec, LoginSetCompressionSpec, State::{Login, Play}};
         use mcproto_rs::types::Chat;
+        use mcproto_rs::v1_15_2::{
+            LoginDisconnectSpec, LoginEncryptionRequestSpec, LoginSetCompressionSpec,
+            LoginSuccessSpec,
+            State::{Login, Play},
+        };
+        use Packet::{
+            LoginDisconnect, LoginEncryptionRequest, LoginEncryptionResponse, LoginSetCompression,
+            LoginStart, LoginSuccess,
+        };
 
-        let mut connection = self.connection.take().expect("connection should always be present");
+        let mut connection = self
+            .connection
+            .take()
+            .expect("connection should always be present");
 
         connection.set_state(Login);
         let login_start = match read_parse!(connection.read_packet()) {
             LoginStart(spec) => spec,
-            packet => { return Err(UnexpectedPacketErr { packet }.into()); }
+            packet => {
+                return Err(UnexpectedPacketErr { packet }.into());
+            }
         };
         self.login_start = Some(login_start.clone());
 
@@ -154,25 +194,35 @@ impl InitialUpstreamHandler {
             let correct_verify_token = random_verify_token();
             let public_key_bytes = self.proxy.rsa_pubkey_asn1();
             let server_id: String = [' '; 20].iter().collect();
-            connection.write_packet(LoginEncryptionRequest(LoginEncryptionRequestSpec {
-                public_key: public_key_bytes.clone().into(),
-                server_id: server_id.clone(),
-                verify_token: correct_verify_token.clone().into(),
-            })).await?;
+            connection
+                .write_packet(LoginEncryptionRequest(LoginEncryptionRequestSpec {
+                    public_key: public_key_bytes.clone().into(),
+                    server_id: server_id.clone(),
+                    verify_token: correct_verify_token.clone().into(),
+                }))
+                .await?;
 
             let response = match read_parse!(connection.read_packet()) {
                 LoginEncryptionResponse(spec) => spec,
-                packet => { return Err(UnexpectedPacketErr { packet }.into()); }
+                packet => {
+                    return Err(UnexpectedPacketErr { packet }.into());
+                }
             };
-            let verify_token_from_client = self.proxy.decrypt_token(response.verify_token.data.as_slice())?;
+            let verify_token_from_client = self
+                .proxy
+                .decrypt_token(response.verify_token.data.as_slice())?;
             if verify_token_from_client != correct_verify_token {
-                connection.write_packet(LoginDisconnect(LoginDisconnectSpec {
-                    message: Chat::from_text("error: bad verify token")
-                })).await?;
+                connection
+                    .write_packet(LoginDisconnect(LoginDisconnectSpec {
+                        message: Chat::from_text("error: bad verify token"),
+                    }))
+                    .await?;
 
                 return Ok(None);
             }
-            let shared_secret = self.proxy.decrypt_token(response.shared_secret.data.as_slice())?;
+            let shared_secret = self
+                .proxy
+                .decrypt_token(response.shared_secret.data.as_slice())?;
             let ip = connection.remote_addr().ip().to_string();
             let http_client = reqwest::Client::default();
 
@@ -184,7 +234,9 @@ impl InitialUpstreamHandler {
                     server_id,
                     public_key: public_key_bytes,
                 },
-            }.send(&http_client).await?;
+            }
+            .send(&http_client)
+            .await?;
 
             connection.enable_encryption(shared_secret.as_slice(), shared_secret.as_slice())?;
             has_joined
@@ -192,56 +244,70 @@ impl InitialUpstreamHandler {
             HasJoinedResponse {
                 name: login_start.name,
                 id: UUID4::random(),
-                properties: vec!(),
+                properties: vec![],
             }
         };
 
         self.join_response = Some(join_response.clone());
 
         let logger = self.proxy.logger();
-        logger.info(format_args!("{}/{} joined", join_response.name, join_response.id.hex()));
+        logger.info(format_args!(
+            "{}/{} joined",
+            join_response.name,
+            join_response.id.hex()
+        ));
 
         if let Some(threshold) = self.proxy.config().compression_threshold.as_ref() {
             let threshold = *threshold;
-            connection.write_packet(LoginSetCompression(LoginSetCompressionSpec {
-                threshold: VarInt(threshold as i32),
-            })).await?;
+            connection
+                .write_packet(LoginSetCompression(LoginSetCompressionSpec {
+                    threshold: VarInt(threshold as i32),
+                }))
+                .await?;
             connection.set_compression_threshold(threshold);
         }
 
-        connection.write_packet(LoginSuccess(LoginSuccessSpec {
-            username: join_response.name.clone(),
-            uuid_string: join_response.id.hex(),
-        })).await?;
+        connection
+            .write_packet(LoginSuccess(LoginSuccessSpec {
+                username: join_response.name.clone(),
+                uuid_string: join_response.id.hex(),
+            }))
+            .await?;
 
         connection.set_state(Play);
 
-        let add_result = self.proxy.add_new_player(
-            connection,
-            self.handshake.take().expect("has handshake"),
-            self.join_response.take().expect("has join response")).await;
+        let add_result = self
+            .proxy
+            .add_new_player(
+                connection,
+                self.handshake.take().expect("has handshake"),
+                self.join_response.take().expect("has join response"),
+            )
+            .await;
 
         match add_result {
             AddPlayerStatus::ConflictId(mut connection, id) => {
                 logger.warning(format_args!("conflict on player id {}", id));
 
-                connection.write_packet(PlayDisconnect(PlayDisconnectSpec {
-                    reason: Chat::from_text("you have already joined this server!")
-                })).await?;
+                connection
+                    .write_packet(PlayDisconnect(PlayDisconnectSpec {
+                        reason: Chat::from_text("you have already joined this server!"),
+                    }))
+                    .await?;
                 Ok(None)
             }
             AddPlayerStatus::ConflictName(mut connection, name) => {
                 logger.warning(format_args!("conflict on player name {}", name));
 
-                connection.write_packet(PlayDisconnect(PlayDisconnectSpec {
-                    reason: Chat::from_text("your username is already in use!")
-                })).await?;
+                connection
+                    .write_packet(PlayDisconnect(PlayDisconnectSpec {
+                        reason: Chat::from_text("your username is already in use!"),
+                    }))
+                    .await?;
 
                 Ok(None)
             }
-            AddPlayerStatus::Added(player) => {
-                Ok(Some(player))
-            }
+            AddPlayerStatus::Added(player) => Ok(Some(player)),
         }
     }
 
