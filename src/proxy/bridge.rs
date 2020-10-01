@@ -10,7 +10,7 @@ use mcproto_rs::v1_15_2::{Id, Packet578 as Packet, PacketDirection, State};
 use mcproto_rs::{Deserialize, Deserialized, Serialize, Serializer};
 use std::io::{Cursor, Read, Write};
 use std::net::SocketAddr;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncReadExt, AsyncWriteExt, BufStream, BufReader, BufWriter};
 use tokio::net::TcpStream;
 
 #[macro_export]
@@ -62,10 +62,13 @@ impl Bridge {
         read_direction: PacketDirection,
         connection: TcpStream,
         remote: SocketAddr,
-    ) -> Self {
+    ) -> Result<Self> {
+        connection.set_nodelay(true)?;
+
         let (read_tcp, write_tcp) = connection.into_split();
+        let buf_read_tcp = BufReader::new(read_tcp);
         let reader = ReadBridge {
-            stream: Box::new(read_tcp),
+            stream: Box::new(buf_read_tcp),
             state: State::Handshaking,
             direction: read_direction,
             compression_threshold: None,
@@ -79,11 +82,11 @@ impl Bridge {
             zlib_buf: None,
         };
         let stream = Some((reader, writer));
-        Self {
+        Ok(Self {
             encryption_enabled: false,
             stream,
             remote,
-        }
+        })
     }
 
     pub fn split(&mut self) -> (&mut ReadBridge, &mut WriteBridge) {
@@ -332,27 +335,29 @@ impl WriteBridge {
                 out.serialize_bytes(raw_body_data.as_slice())?;
                 out.into_bytes()
             } else {
+                let data_len_bytes = {
+                    let mut out = BytesSerializer::with_capacity(5);
+                    out.serialize_other(&VarInt(raw_body_data.len() as i32))?;
+                    out.into_bytes()
+                };
+
                 let cursor = Cursor::new(if let Some(buf) = self.zlib_buf.as_mut() {
                     buf.clear();
                     buf
                 } else {
-                    self.zlib_buf = Some(Vec::with_capacity(8192));
+                    self.zlib_buf = Some(Vec::with_capacity(16384));
                     self.zlib_buf.as_mut().expect("just set this up")
                 });
+
                 let mut encoder = ZlibEncoder::new(cursor, Compression::fast());
                 encoder.write_all(raw_body_data.as_slice())?;
                 let compressed = encoder.finish()?.into_inner();
 
-                let with_data_len = {
-                    let mut out = BytesSerializer::with_capacity(5 + compressed.len());
-                    out.serialize_other(&VarInt(raw_body_data.len() as i32))?;
-                    out.serialize_bytes(compressed.as_slice())?;
-                    out.into_bytes()
-                };
-
-                let mut out = BytesSerializer::with_capacity(5 + with_data_len.len());
-                out.serialize_other(&VarInt(with_data_len.len() as i32))?;
-                out.serialize_bytes(with_data_len.as_slice())?;
+                let packet_len = VarInt((data_len_bytes.len() + compressed.len()) as i32);
+                let mut out = BytesSerializer::with_capacity(data_len_bytes.len() + compressed.len() + 5);
+                out.serialize_other(&packet_len)?;
+                out.serialize_bytes(data_len_bytes.as_slice())?;
+                out.serialize_bytes(compressed.as_slice())?;
                 out.into_bytes()
             }
         } else {
@@ -363,6 +368,7 @@ impl WriteBridge {
         };
 
         self.stream.write_all(body_data.as_slice()).await?;
+        self.stream.flush().await?;
         Ok(())
     }
 

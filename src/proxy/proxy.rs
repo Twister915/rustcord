@@ -78,8 +78,7 @@ impl Proxy {
                     loop {
                         let (stream, from) = listener.accept().await?;
                         logger.info(format_args!("connection from {:?}", from));
-                        let connection =
-                            Bridge::initial(PacketDirection::ServerBound, stream, from);
+                        let connection = Bridge::initial(PacketDirection::ServerBound, stream, from)?;
                         InitialUpstreamHandler::new(
                             connection,
                             Self {
@@ -343,7 +342,7 @@ async fn downstream_connect(
 
     let stream = TcpStream::connect(target).await?;
     let peer_addr = stream.peer_addr()?;
-    let mut bridge = Bridge::initial(ClientBound, stream, peer_addr);
+    let mut bridge = Bridge::initial(ClientBound, stream, peer_addr)?;
     bridge
         .write_packet(Handshake(HandshakeSpec {
             version: 578.into(),
