@@ -1,19 +1,16 @@
-use super::bridge::{Bridge, PacketNext, ReadBridge};
+use super::bridge::{Bridge, ReadBridge};
 use super::config::TargetServerSpec;
 use super::initial_handler::InitialUpstreamHandler;
 use super::logger::{Level, Logger};
 use super::session::{HasJoinedResponse, UserProperty};
 use super::{Configuration, UnexpectedPacketErr};
-use crate::{read_check_closed, read_parse};
 
 use crate::proxy::bridge::WriteBridge;
 use anyhow::{anyhow, Result};
-use futures::{Stream, TryStreamExt};
-use mcproto_rs::protocol::{Packet as PacketTrait, RawPacket};
 use mcproto_rs::types::Chat;
 use mcproto_rs::uuid::UUID4;
 use mcproto_rs::v1_15_2::{
-    HandshakeSpec, Id, Packet578 as Packet, PacketDirection, PlayDisconnectSpec,
+    HandshakeSpec, Packet578 as Packet, PacketDirection, PlayDisconnectSpec,
 };
 use rsa::{PaddingScheme, PublicKey, RSAPrivateKey};
 use std::collections::HashMap;
@@ -237,10 +234,6 @@ pub struct PlayerInner {
     handshake: HandshakeSpec,
 }
 
-pub struct DownstreamConnection {
-    bridge: Bridge,
-}
-
 impl Player {
     pub async fn connect_to_initial_downstream(&self) -> Result<()> {
         let mut inner = self.inner.write().await;
@@ -302,8 +295,8 @@ impl PlayerInner {
         )
         .await?;
 
-        let (upstream_read, mut upstream_write) = upstream.into_split();
-        let (downstream_read, mut downstream_write) = downstream.into_split();
+        let (upstream_read, upstream_write) = upstream.split();
+        let (downstream_read, downstream_write) = downstream.split();
 
         tokio::try_join!(
             forward_forever(downstream_read, upstream_write),
@@ -315,8 +308,9 @@ impl PlayerInner {
 
 async fn forward_forever(mut source: ReadBridge, mut to: WriteBridge) -> Result<()> {
     tokio::spawn(async move {
-        while let PacketNext::Read(packet) = source.read_packet().await? {
-            to.write_raw_packet(packet).await?;
+        while let Some(mut packet) = source.read_packet().await? {
+            let deserialized = packet.deserialize()?;
+            to.write_packet(deserialized).await?;
         }
 
         Ok(())
@@ -358,7 +352,8 @@ async fn downstream_connect(
     bridge.set_state(Login);
     bridge.write_packet(LoginStart(LoginStartSpec { name: username.clone() })).await?;
     loop {
-        match read_parse!(bridge.read_packet()) {
+        let packet = bridge.must_read_packet().await?.deserialize()?;
+        match packet {
             LoginSetCompression(spec) => {
                 logger.debug(format_args!("downstream asked for compression with threshold {:?}", spec.threshold));
                 bridge.set_compression_threshold(spec.threshold.into());

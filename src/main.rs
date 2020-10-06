@@ -21,6 +21,6 @@ async fn main() -> Result<()> {
         log_level: Level::Trace,
     };
 
-    let mut prox = proxy::Proxy::new(config)?;
+    let prox = proxy::Proxy::new(config)?;
     prox.listen_and_serve().await
 }

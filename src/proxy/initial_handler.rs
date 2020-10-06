@@ -1,12 +1,10 @@
-use super::bridge::{Bridge, PacketNext};
+use super::bridge::Bridge;
 use super::{session, Proxy};
-use crate::{read_check_closed, read_parse};
 
 use crate::proxy::proxy::{AddPlayerStatus, Player};
 use crate::proxy::session::HasJoinedResponse;
 use crate::proxy::UnexpectedPacketErr;
-use anyhow::{anyhow, Result};
-use mcproto_rs::protocol::Packet as PacketTrait;
+use anyhow::Result;
 use mcproto_rs::types::VarInt;
 use mcproto_rs::uuid::UUID4;
 use mcproto_rs::v1_15_2::Packet578::PlayDisconnect;
@@ -59,11 +57,12 @@ impl InitialUpstreamHandler {
 
     async fn do_initial_handle(&mut self) -> Result<Option<Player>> {
         use Packet::Handshake;
-        match read_parse!(self
-            .connection
-            .as_mut()
+        let packet = self.connection.as_mut()
             .expect("need connection")
-            .read_packet())
+            .must_read_packet()
+            .await?
+            .deserialize()?;
+        match packet
         {
             Handshake(spec) => {
                 self.proxy.logger().debug(format_args!("upstream connection got handshake {:?}", spec));
@@ -101,12 +100,14 @@ impl InitialUpstreamHandler {
         connection.set_state(Status);
 
         // get status request
-        match read_parse!(connection.read_packet()) {
+        match connection.must_read_packet().await?.deserialize()? {
             StatusRequest(_) => (),
             packet => {
                 return Err(UnexpectedPacketErr { packet }.into());
             }
         };
+
+        self.proxy.logger().info(format_args!("handling status, got request"));
 
         // prepare status response
         let response = {
@@ -145,16 +146,14 @@ impl InitialUpstreamHandler {
             .await?;
 
         let StatusPingSpec { payload } = {
-            use super::bridge::PacketNext::*;
-
             match connection.read_packet().await? {
-                Read(packet) => match Packet::mc_deserialize(packet)? {
+                Some(mut packet) => match packet.deserialize()? {
                     StatusPing(ping) => ping,
                     packet => {
                         return Err(UnexpectedPacketErr { packet }.into());
                     }
                 },
-                Closed => {
+                None => {
                     return Ok(());
                 }
             }
@@ -183,7 +182,7 @@ impl InitialUpstreamHandler {
             .expect("connection should always be present");
 
         connection.set_state(Login);
-        let login_start = match read_parse!(connection.read_packet()) {
+        let login_start = match connection.must_read_packet().await?.deserialize()? {
             LoginStart(spec) => spec,
             packet => {
                 return Err(UnexpectedPacketErr { packet }.into());
@@ -203,7 +202,7 @@ impl InitialUpstreamHandler {
                 }))
                 .await?;
 
-            let response = match read_parse!(connection.read_packet()) {
+            let response = match connection.must_read_packet().await?.deserialize()? {
                 LoginEncryptionResponse(spec) => spec,
                 packet => {
                     return Err(UnexpectedPacketErr { packet }.into());
@@ -260,16 +259,14 @@ impl InitialUpstreamHandler {
 
         if let Some(threshold) = self.proxy.config().compression_threshold.as_ref() {
             let threshold = *threshold;
-            connection
-                .write_packet(LoginSetCompression(LoginSetCompressionSpec {
+            connection.write_packet(LoginSetCompression(LoginSetCompressionSpec {
                     threshold: VarInt(threshold as i32),
                 }))
                 .await?;
             connection.set_compression_threshold(threshold);
         }
 
-        connection
-            .write_packet(LoginSuccess(LoginSuccessSpec {
+        connection.write_packet(LoginSuccess(LoginSuccessSpec {
                 username: join_response.name.clone(),
                 uuid_string: join_response.id.hex(),
             }))
