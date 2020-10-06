@@ -293,6 +293,7 @@ impl PlayerInner {
     async fn connect_to_downstream(&mut self, downstream: &TargetServerSpec) -> Result<()> {
         let upstream = self.upstream.take().expect("must be connected");
         let downstream = downstream_connect(
+            self.proxy.logger(),
             downstream.address.clone(),
             self.username.clone(),
             upstream.remote_addr().ip().to_string(),
@@ -325,6 +326,7 @@ async fn forward_forever(mut source: ReadBridge, mut to: WriteBridge) -> Result<
 }
 
 async fn downstream_connect(
+    logger: &Logger,
     target: String,
     username: String,
     ip: String,
@@ -340,30 +342,33 @@ async fn downstream_connect(
         State::{Login, Play},
     };
 
+    logger.debug(format_args!("connecting {}/{} (from {}) to {:?}", username, id, ip, target));
     let stream = TcpStream::connect(target).await?;
     let peer_addr = stream.peer_addr()?;
+    logger.debug(format_args!("connected to {}", peer_addr));
     let mut bridge = Bridge::initial(ClientBound, stream, peer_addr)?;
-    bridge
-        .write_packet(Handshake(HandshakeSpec {
-            version: 578.into(),
-            server_address: [handshake.server_address, ip, id.to_string()].join("\x00"),
-            server_port: handshake.server_port,
-            next_state: HandshakeNextState::Login,
-        }))
-        .await?;
+    let handshake = Handshake(HandshakeSpec {
+        version: 578.into(),
+        server_address: [handshake.server_address, ip.clone(), id.to_string()].join("\x00"),
+        server_port: handshake.server_port,
+        next_state: HandshakeNextState::Login,
+    });
+    logger.debug(format_args!("handshake with downstream {:?}", handshake));
+    bridge.write_packet(handshake).await?;
     bridge.set_state(Login);
-    bridge
-        .write_packet(LoginStart(LoginStartSpec { name: username }))
-        .await?;
+    bridge.write_packet(LoginStart(LoginStartSpec { name: username.clone() })).await?;
     loop {
         match read_parse!(bridge.read_packet()) {
             LoginSetCompression(spec) => {
+                logger.debug(format_args!("downstream asked for compression with threshold {:?}", spec.threshold));
                 bridge.set_compression_threshold(spec.threshold.into());
             }
-            LoginSuccess(_) => {
+            LoginSuccess(spec) => {
+                logger.debug(format_args!("downstream said 'login success!' switching to play {:?}", spec));
                 break;
             }
             LoginEncryptionRequest(_) => {
+                logger.warning(format_args!("downstream {} asked for encryption, it's in online mode, disconnecting {}/{} (from {})", peer_addr, username, id, ip));
                 return Err(anyhow!("server is in online mode"));
             }
             packet => {

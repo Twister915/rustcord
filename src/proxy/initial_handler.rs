@@ -66,6 +66,7 @@ impl InitialUpstreamHandler {
             .read_packet())
         {
             Handshake(spec) => {
+                self.proxy.logger().debug(format_args!("upstream connection got handshake {:?}", spec));
                 let next_state = spec.next_state.clone();
                 self.handshake = Some(spec);
 
