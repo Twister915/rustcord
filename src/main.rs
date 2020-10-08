@@ -1,3 +1,12 @@
+#![feature(assoc_char_funcs)]
+
+#[cfg(not(target_env = "msvc"))]
+use jemallocator::Jemalloc;
+
+#[cfg(not(target_env = "msvc"))]
+#[global_allocator]
+static GLOBAL: Jemalloc = Jemalloc;
+
 use crate::proxy::logger::Level;
 use anyhow::Result;
 
@@ -17,7 +26,7 @@ async fn main() -> Result<()> {
         }],
         ping_backends: false,
         encryption: true,
-        compression_threshold: Some(256),
+        compression_threshold: None,
         log_level: Level::Trace,
     };
 

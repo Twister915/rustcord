@@ -1,11 +1,11 @@
 mod bridge;
 mod config;
-mod crypto;
 mod initial_handler;
 pub mod logger;
 mod proxy;
 mod session;
 mod util;
+mod cfb8;
 
 pub use config::*;
 pub use proxy::Proxy;

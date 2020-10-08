@@ -11,17 +11,18 @@ use mcproto_rs::v1_15_2::Packet578::PlayDisconnect;
 use mcproto_rs::v1_15_2::{HandshakeSpec, LoginStartSpec, Packet578 as Packet, PlayDisconnectSpec};
 use rand::Rng;
 use tokio::task::JoinHandle;
+use crate::proxy::bridge::TcpBridge;
 
 pub struct InitialUpstreamHandler {
     proxy: Proxy,
-    connection: Option<Bridge>,
+    connection: Option<TcpBridge>,
     handshake: Option<HandshakeSpec>,
     login_start: Option<LoginStartSpec>,
     join_response: Option<HasJoinedResponse>,
 }
 
 impl InitialUpstreamHandler {
-    pub fn new(connection: Bridge, proxy: Proxy) -> Self {
+    pub fn new(connection: TcpBridge, proxy: Proxy) -> Self {
         Self {
             proxy,
             connection: Some(connection),
