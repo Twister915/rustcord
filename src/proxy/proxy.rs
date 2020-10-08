@@ -8,17 +8,15 @@ use super::{Configuration, UnexpectedPacketErr};
 use anyhow::{anyhow, Result};
 use mcproto_rs::types::Chat;
 use mcproto_rs::uuid::UUID4;
-use mcproto_rs::v1_15_2::{HandshakeSpec, Packet578 as Packet, PacketDirection, PlayDisconnectSpec, PlayerInfoActionList, Id, PlayClientPluginMessageSpec};
+use mcproto_rs::v1_15_2::{HandshakeSpec, Packet578 as Packet, PacketDirection, PlayDisconnectSpec, PlayerInfoActionList, Id};
 use rsa::{PaddingScheme, PublicKey, RSAPrivateKey};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{RwLock, Mutex};
 use tokio::task::JoinHandle;
-use crate::proxy::bridge::RawPacket;
 use futures::FutureExt;
 use futures::future::Either;
-use tokio::macros::support::Future;
 use std::net::SocketAddr;
 
 pub struct Proxy {
@@ -331,21 +329,32 @@ impl PlayerInner {
             .await
     }
 
-    async fn connect_to_downstream(&mut self, downstream: &TargetServerSpec) -> Result<()> {
-        self.state.lock().await.current_server_id = Some(downstream.name.clone());
+    async fn connect_to_downstream(&mut self, target: &TargetServerSpec) -> Result<()> {
         let upstream = match &self.upstream {
             Some(upstream) => upstream.clone(),
             None => return Err(anyhow!("player is not connected")),
         };
-        self.downstream.replace(downstream_connect(
+
+        match downstream_connect(
             self.proxy.logger(),
-            downstream.address.clone(),
+            target.address.clone(),
             self.username.clone(),
             upstream.remote_addr.ip().to_string(),
             self.id,
             self.handshake.clone(),
-        ).await?);
+        ).await? {
+            Either::Left(new_downstream) => self.downstream.replace(new_downstream),
+            Either::Right(disconnect_message) => {
+                self.proxy.logger().info(format_args!("player {} was disconnected by {} for {}", self.username, target.name, disconnect_message.to_string()));
+                upstream.writer.lock().await.write_packet(Packet::PlayDisconnect(PlayDisconnectSpec{
+                    reason: Chat::from_text(format!("server disconnected: {}", disconnect_message.text).as_str())
+                })).await?;
+                return Ok(());
+            }
+        };
+
         let downstream = self.downstream.as_ref().expect("just created this").clone();
+        self.state.lock().await.current_server_id = Some(target.name.clone());
 
         let either = {
             tokio::pin! {
@@ -516,16 +525,17 @@ impl PlayerInner {
         }
     }
 
-    async fn handle_packet(&self, mut packet: Packet) -> PacketHandleResult {
+    async fn handle_packet(&self, packet: Packet) -> PacketHandleResult {
         match packet {
             Packet::PlayPlayerInfo(mut body) => {
                 self.handle_player_info(&mut body).await;
                 PacketHandleResult::WriteNext(Packet::PlayPlayerInfo(body))
             }
-            Packet::PlayDisconnect(_) => {
-                PacketHandleResult::FinalPacket(packet)
+            Packet::PlayDisconnect(mut body) => {
+                body.reason = Chat::from_text(format!("server kicked: {}", body.reason.text).as_str());
+                PacketHandleResult::FinalPacket(Packet::PlayDisconnect(body))
             }
-            Packet::PlayJoinGame(mut body) => {
+            Packet::PlayJoinGame(body) => {
                 self.handle_join_game(body).await
             }
             Packet::PlayServerPluginMessage(body) => {
@@ -589,7 +599,7 @@ impl PlayerInner {
         }
     }
 
-    async fn handle_join_game(&self, mut body: mcproto_rs::v1_15_2::PlayJoinGameSpec) -> PacketHandleResult {
+    async fn handle_join_game(&self, body: mcproto_rs::v1_15_2::PlayJoinGameSpec) -> PacketHandleResult {
         let mut state = self.state.lock().await;
         state.server_entity_id = Some(body.entity_id);
         if state.client_entity_id.is_none() {
@@ -601,7 +611,7 @@ impl PlayerInner {
         }
     }
 
-    async fn handle_plugin_message(&self, mut body: mcproto_rs::v1_15_2::PlayServerPluginMessageSpec) -> Result<PacketHandleResult> {
+    async fn handle_plugin_message(&self, body: mcproto_rs::v1_15_2::PlayServerPluginMessageSpec) -> Result<PacketHandleResult> {
         let bytes = body.data.data.as_slice();
         if body.channel == "BungeeCord" {
             let (sub_channel, bytes) = read_java_utf8(bytes)?;
@@ -692,11 +702,11 @@ async fn downstream_connect(
     ip: String,
     id: UUID4,
     handshake: HandshakeSpec,
-) -> Result<Arc<PlayerBridgePair>> {
+) -> Result<Either<Arc<PlayerBridgePair>, Chat>> {
     use mcproto_rs::v1_15_2::{
         HandshakeNextState, LoginStartSpec,
         Packet578::{
-            Handshake, LoginEncryptionRequest, LoginSetCompression, LoginStart, LoginSuccess,
+            Handshake, LoginEncryptionRequest, LoginSetCompression, LoginStart, LoginSuccess, LoginDisconnect,
         },
         PacketDirection::ClientBound,
         State::{Login, Play},
@@ -732,6 +742,9 @@ async fn downstream_connect(
                 logger.warning(format_args!("downstream {} asked for encryption, it's in online mode, disconnecting {}/{} (from {})", peer_addr, username, id, ip));
                 return Err(anyhow!("server is in online mode"));
             }
+            LoginDisconnect(body) => {
+                return Ok(Either::Right(body.message))
+            }
             packet => {
                 return Err(UnexpectedPacketErr { packet }.into());
             }
@@ -740,11 +753,11 @@ async fn downstream_connect(
     bridge.set_state(Play);
     let remote_addr = bridge.remote_addr().clone();
     let (read_half, write_half) = bridge.split();
-    Ok(Arc::new(PlayerBridgePair {
+    Ok(Either::Left(Arc::new(PlayerBridgePair {
         remote_addr,
         reader: Mutex::new(read_half),
         writer: Mutex::new(write_half),
-    }))
+    })))
 }
 
 #[derive(Default)]

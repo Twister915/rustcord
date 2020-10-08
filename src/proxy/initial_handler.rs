@@ -1,4 +1,3 @@
-use super::bridge::Bridge;
 use super::{session, Proxy};
 
 use crate::proxy::proxy::{AddPlayerStatus, Player};

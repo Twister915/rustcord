@@ -2,7 +2,7 @@ use mcproto_rs::v1_15_2::{State, PacketDirection, Id, Packet578};
 use std::net::SocketAddr;
 use anyhow::Result;
 use mcproto_rs::protocol::Packet;
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use mcproto_rs::types::VarInt;
 use mcproto_rs::{Deserialize, Deserialized, Serializer, SerializeResult, Serialize};
 use flate2::{FlushDecompress, Status, Compression, FlushCompress};
