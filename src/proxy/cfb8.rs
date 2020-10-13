@@ -39,13 +39,11 @@ impl MinecraftCipher {
         })
     }
 
-    //noinspection DuplicatedCode
     #[inline]
     pub fn encrypt(&mut self, data: &mut[u8]) {
         unsafe { self.crypt(data, false) }
     }
 
-    //noinspection DuplicatedCode
     #[inline]
     pub fn decrypt(&mut self, data: &mut[u8]) {
         unsafe { self.crypt(data, true) }

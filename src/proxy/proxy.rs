@@ -345,9 +345,9 @@ impl PlayerInner {
         ).await? {
             Either::Left(new_downstream) => self.downstream.replace(new_downstream),
             Either::Right(disconnect_message) => {
-                self.proxy.logger().info(format_args!("player {} was disconnected by {} for {}", self.username, target.name, disconnect_message.to_string()));
+                self.proxy.logger().info(format_args!("player {} was disconnected by {} for {}", self.username, target.name, disconnect_message.to_traditional().expect("should be text")));
                 upstream.writer.lock().await.write_packet(Packet::PlayDisconnect(PlayDisconnectSpec{
-                    reason: Chat::from_text(format!("server disconnected: {}", disconnect_message.text).as_str())
+                    reason: Chat::from_text(format!("server disconnected: {}", disconnect_message.to_traditional().expect("should be text")).as_str())
                 })).await?;
                 return Ok(());
             }
@@ -511,6 +511,7 @@ impl PlayerInner {
                                 }
                             }
                             Err(err) => {
+                                self.proxy.logger().debug(format_args!("data: {:?}", packet.bytes()));
                                 return ForwardingResult::DeserializeErr(packet.id().clone(), err);
                             }
                         }
@@ -532,7 +533,7 @@ impl PlayerInner {
                 PacketHandleResult::WriteNext(Packet::PlayPlayerInfo(body))
             }
             Packet::PlayDisconnect(mut body) => {
-                body.reason = Chat::from_text(format!("server kicked: {}", body.reason.text).as_str());
+                body.reason = Chat::from_text(format!("server kicked: {}", body.reason.to_traditional().expect("should be text")).as_str());
                 PacketHandleResult::FinalPacket(Packet::PlayDisconnect(body))
             }
             Packet::PlayJoinGame(body) => {

@@ -423,6 +423,8 @@ pub trait RawPacket: Send {
     fn id(&self) -> &Id;
 
     fn deserialize(&mut self) -> Result<Packet578>;
+
+    fn bytes(&self) -> &[u8];
 }
 
 
@@ -442,6 +444,10 @@ impl<'a> RawPacket for RegularRawPacket<'a> {
             id: self.id,
             data: self.data,
         })?)
+    }
+
+    fn bytes(&self) -> &[u8] {
+        self.data
     }
 }
 
