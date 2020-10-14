@@ -624,7 +624,7 @@ checksum = "7ffc5c5338469d4d3ea17d269fa8ea3512ad247247c30bd2df69e68309ed0a08"
 [[package]]
 name = "mcproto-rs"
 version = "0.1.0"
-source = "git+https://github.com/Twister915/mcproto-rs?branch=master#d018930688c7efabc67a8257dbcb3258cfeeae93"
+source = "git+https://github.com/Twister915/mcproto-rs?branch=master#441f94457030bf6f827fc55100ac1fa7abe4cb0a"
 dependencies = [
  "base64",
  "flate2",

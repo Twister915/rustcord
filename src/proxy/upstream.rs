@@ -14,6 +14,7 @@ use crate::proxy::auth::UserProperty;
 use tokio::sync::{Mutex, MutexGuard};
 use tokio::net::ToSocketAddrs;
 use mcproto_rs::protocol::Packet as PacketTrait;
+use std::collections::HashSet;
 
 pub type UpstreamConnection = Arc<UpstreamInner>;
 
@@ -35,6 +36,7 @@ pub struct UpstreamInner {
 pub struct UpstreamBridges {
     pub connected_to: Option<DownstreamConnection>,
     pub pending_next: Option<DownstreamConnection>,
+    pub tablist_members: HashSet<UUID4>,
 }
 
 pub enum ForwardingStatus {
@@ -90,6 +92,17 @@ impl Into<ForwardingStatus> for ServerToClientStatus {
     }
 }
 
+macro_rules! deserialize_raw {
+    ($packet: expr, $e: ty) => {
+        match $packet.deserialize() {
+            Ok(body) => body,
+            Err(err) => {
+                return <$e>::BadPacket(err.into());
+            }
+        }
+    }
+}
+
 impl UpstreamInner {
     pub(crate) fn create(
         streams: Streams,
@@ -114,6 +127,7 @@ impl UpstreamInner {
             downstream: Mutex::new(UpstreamBridges {
                 connected_to: None,
                 pending_next: None,
+                tablist_members: HashSet::default(),
             }),
         }
     }
@@ -247,6 +261,7 @@ impl UpstreamInner {
             return ForwardingStatus::OtherErr(anyhow!("no pending downstream..."));
         };
         state.connected_to = Some(pending.clone());
+        std::mem::drop(state);
         self.forward_forever(pending).await
     }
 
@@ -301,34 +316,51 @@ impl UpstreamInner {
                         }
                     };
 
-                    use RawPacket::PlayDisconnect as RawPlayDisconnect;
-                    use Packet::PlayDisconnect;
-
+                    use RawPacket::*;
                     match &next_read {
-                        RawPlayDisconnect(_) => {
-                            return match next_read.deserialize() {
-                                Err(err) => {
-                                    ServerToClientStatus::BadPacket(err.into())
-                                }
-                                Ok(PlayDisconnect(body)) => {
-                                    ServerToClientStatus::Kicked(body.reason)
-                                }
-                                Ok(other) => {
-                                    ServerToClientStatus::OtherErr(anyhow!("unexpected packet {:?}", other))
-                                }
-                            };
+                        PlayDisconnect(raw) => {
+                            let body = deserialize_raw!(raw, ServerToClientStatus);
+                            return ServerToClientStatus::Kicked(body.reason);
                         }
-                        _ => {
-                            if let Err(err) = self.streams.write_raw_packet(next_read).await {
-                                return ServerToClientStatus::WriteErr(err);
-                            }
-                        }
+                        PlayPlayerInfo(raw) => {
+                            let body = deserialize_raw!(raw, ServerToClientStatus);
+                            self.handle_tablist_update(body).await;
+                        },
+                        _ => {}
+                    }
+
+                    if let Err(err) = self.streams.write_raw_packet(next_read).await {
+                        return ServerToClientStatus::WriteErr(err);
                     }
                 }
                 Err(err) => {
                     return ServerToClientStatus::OtherErr(err);
                 }
             }
+        }
+    }
+
+    async fn handle_tablist_update(self: &UpstreamConnection, data: proto::PlayPlayerInfoSpec) {
+        use proto::PlayerInfoActionList::*;
+        match data.actions {
+            Add(adds) => {
+                let mut state = self.downstream.lock().await;
+                let tablist = &mut state.tablist_members;
+                for add in adds {
+                    let id = &add.uuid;
+                    if !tablist.contains(id) {
+                        tablist.insert(*id);
+                    }
+                }
+            }
+            Remove(ids) => {
+                let mut state = self.downstream.lock().await;
+                let tablist = &mut state.tablist_members;
+                for id in ids {
+                    tablist.remove(&id);
+                }
+            },
+            _ => {}
         }
     }
 
