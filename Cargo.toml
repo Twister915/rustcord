@@ -9,21 +9,18 @@ license = "APACHE 2.0"
 
 [dependencies]
 mcproto-rs = { git = "https://github.com/Twister915/mcproto-rs", branch = "master" }
+mctokio = { git = "https://github.com/Twister915/mctokio", branch = "master" }
 tokio = { version = "0.2", features = ["rt-threaded", "io-driver", "io-util", "tcp", "time", "macros", "sync", "dns"] }
-chrono = "0.4.19"
 anyhow = "1.0"
-futures = "0.3"
-aesni = { version = "0.9.0", default-features = false }
-flate2 = { version = "1.0.17", features = ["zlib"] }
-pin-project = "0.4.24"
+chrono = "0.4.19"
 reqwest = { version = "0.10", features = ["json"] }
 serde = { version = "1.0.116", features = ["derive"] }
 serde_json = "1.0"
-rsa = "0.2"
-rsa-der = "0.2"
 rust-crypto = "0.2.36"
 rand = "0.7"
-base64 = "0.12.3"
+futures = "0.3"
+rsa = "0.2"
+rsa-der = "0.2"
 num-bigint-dig = "0.6.0"
 
 [target.'cfg(not(target_env = "msvc"))'.dependencies]

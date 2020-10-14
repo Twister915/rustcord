@@ -1,5 +1,3 @@
-#![feature(assoc_char_funcs)]
-
 #[cfg(not(target_env = "msvc"))]
 use jemallocator::Jemalloc;
 
@@ -14,11 +12,11 @@ mod proxy;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let config = proxy::Configuration {
+    let config = proxy::config::Configuration {
         bind_addresses: vec!["0.0.0.0:25565".to_owned()],
         max_players: 100,
         motd: Some("A Rust Minecraft Proxy".to_owned()),
-        servers: vec![proxy::TargetServerSpec {
+        servers: vec![proxy::config::TargetServerSpec {
             name: "lobby".to_owned(),
             address: "127.0.0.1:21000".to_owned(),
             connect_to: true,
@@ -30,6 +28,5 @@ async fn main() -> Result<()> {
         log_level: Level::Trace,
     };
 
-    let prox = proxy::Proxy::new(config)?;
-    prox.listen_and_serve().await
+    proxy::proxy::ProxyInner::listen_and_serve(config).await
 }
