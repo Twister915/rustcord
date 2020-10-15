@@ -13,8 +13,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use crate::proxy::auth::UserProperty;
 use tokio::sync::{Mutex, MutexGuard};
 use tokio::net::ToSocketAddrs;
-use mcproto_rs::protocol::Packet as PacketTrait;
 use std::collections::HashSet;
+use std::pin::Pin;
 
 pub type UpstreamConnection = Arc<UpstreamInner>;
 
@@ -97,7 +97,7 @@ macro_rules! deserialize_raw {
         match $packet.deserialize() {
             Ok(body) => body,
             Err(err) => {
-                return <$e>::BadPacket(err.into());
+                return Some(<$e>::BadPacket(err.into()));
             }
         }
     }
@@ -206,7 +206,14 @@ impl UpstreamInner {
         self.connect_next(downstream_state, &target.name, target.address.clone()).await
     }
 
-    pub async fn connect_next<A: ToSocketAddrs + std::fmt::Debug + Clone>(self: &UpstreamConnection, mut state: MutexGuard<'_, UpstreamBridges>, name: &String, to: A) -> ForwardingStatus {
+    pub async fn connect_next(self: &UpstreamConnection, mut state: MutexGuard<'_, UpstreamBridges>, name: &String, to: String) -> ForwardingStatus {
+        if let Some(current) = &state.connected_to {
+            if current.target_addr == to {
+                let msg = format!("&calready connected to &f{}", name);
+                return self.handle_connect_err(state, Chat::from_traditional(msg.as_str(), true)).await;
+            }
+        }
+
         match DownstreamInner::connect(self.clone(), to).await {
             Ok(pending) => {
                 state.pending_next.replace(pending);
@@ -262,80 +269,111 @@ impl UpstreamInner {
         };
         state.connected_to = Some(pending.clone());
         std::mem::drop(state);
+
+        if let Err(err) = self.streams.write_packet(Packet::PlayJoinGame(pending.join_game.clone())).await {
+            return ForwardingStatus::ClientDisconnected(Some(err));
+        }
+
         self.forward_forever(pending).await
     }
 
     async fn forward_forever(self: &UpstreamConnection, to: DownstreamConnection) -> ForwardingStatus {
-        tokio::pin! {
-            let client_to_server = self.forward_client_to_server(&to);
-            let server_to_client = self.forward_server_to_client(&to);
-        }
+        let mut client_to_server = self.forward_client_to_server_once(&to);
+        let mut server_to_client = self.forward_server_to_client_once(&to);
 
-        tokio::select! {
-            result = &mut client_to_server => result.into(),
-            result = &mut server_to_client => result.into(),
-        }
-    }
-
-    async fn forward_client_to_server(self: &UpstreamConnection, to: &DownstreamConnection) -> ClientToServerStatus {
         loop {
-            match self.streams.reader().await.as_mut() {
-                Ok(bridge) => {
-                    let next_read = match bridge.read_packet().await {
-                        Err(err) => {
-                            return ClientToServerStatus::OtherErr(err);
-                        },
-                        Ok(Some(next_read)) => next_read,
-                        Ok(None) => {
-                            return ClientToServerStatus::Disconnected;
-                        }
-                    };
-
-                    if let Err(err) = to.streams.write_raw_packet(next_read).await {
-                        return ClientToServerStatus::WriteErr(err);
+            let mut c2s = unsafe { Pin::new_unchecked(&mut client_to_server) };
+            let mut s2c = unsafe { Pin::new_unchecked(&mut server_to_client) };
+            tokio::select! {
+                result = &mut c2s => {
+                    if let Some(result) = result {
+                        s2c.await; // drop this
+                        return result.into();
+                    } else {
+                        client_to_server = self.forward_client_to_server_once(&to);
                     }
-                },
-                Err(err) => {
-                    return ClientToServerStatus::OtherErr(err);
+                }
+                result = &mut s2c => {
+                    if let Some(result) = result {
+                        c2s.await; // drop this
+                        return result.into();
+                    } else {
+                        server_to_client = self.forward_server_to_client_once(&to);
+                    }
                 }
             }
         }
     }
 
-    async fn forward_server_to_client(self: &UpstreamConnection, from: &DownstreamConnection) -> ServerToClientStatus {
-        loop {
-            match from.streams.reader().await.as_mut() {
-                Ok(bridge) => {
-                    let next_read = match bridge.read_packet().await {
-                        Err(err) => {
-                            return ServerToClientStatus::OtherErr(err);
-                        }
-                        Ok(Some(next_read)) => next_read,
-                        Ok(None) => {
-                            return ServerToClientStatus::Disconnected;
-                        }
-                    };
-
-                    use RawPacket::*;
-                    match &next_read {
-                        PlayDisconnect(raw) => {
-                            let body = deserialize_raw!(raw, ServerToClientStatus);
-                            return ServerToClientStatus::Kicked(body.reason);
-                        }
-                        PlayPlayerInfo(raw) => {
-                            let body = deserialize_raw!(raw, ServerToClientStatus);
-                            self.handle_tablist_update(body).await;
-                        },
-                        _ => {}
+    async fn forward_client_to_server_once(self: &UpstreamConnection, to: &DownstreamConnection) -> Option<ClientToServerStatus> {
+        match self.streams.reader().await.as_mut() {
+            Ok(bridge) => {
+                let next_read = match bridge.read_packet().await {
+                    Err(err) => {
+                        return Some(ClientToServerStatus::OtherErr(err));
                     }
-
-                    if let Err(err) = self.streams.write_raw_packet(next_read).await {
-                        return ServerToClientStatus::WriteErr(err);
+                    Ok(Some(next_read)) => next_read,
+                    Ok(None) => {
+                        return Some(ClientToServerStatus::Disconnected);
                     }
+                };
+
+                if let Err(err) = to.streams.write_raw_packet(next_read).await {
+                    return Some(ClientToServerStatus::WriteErr(err));
                 }
-                Err(err) => {
-                    return ServerToClientStatus::OtherErr(err);
+
+                None
+            }
+            Err(err) => {
+                return Some(ClientToServerStatus::OtherErr(err));
+            }
+        }
+    }
+
+    async fn forward_server_to_client_once(self: &UpstreamConnection, from: &DownstreamConnection) -> Option<ServerToClientStatus> {
+        match from.streams.reader().await.as_mut() {
+            Ok(bridge) => {
+                let next_read = match bridge.read_packet().await {
+                    Err(err) => {
+                        return Some(ServerToClientStatus::OtherErr(err));
+                    }
+                    Ok(Some(next_read)) => next_read,
+                    Ok(None) => {
+                        return Some(ServerToClientStatus::Disconnected);
+                    }
+                };
+
+                use RawPacket::*;
+                match &next_read {
+                    PlayDisconnect(raw) => {
+                        let body = deserialize_raw!(raw, ServerToClientStatus);
+                        return Some(ServerToClientStatus::Kicked(body.reason));
+                    }
+                    PlayPlayerInfo(raw) => {
+                        let body = deserialize_raw!(raw, ServerToClientStatus);
+                        self.handle_tablist_update(body).await;
+                    }
+                    PlayServerPluginMessage(raw) => {
+                        let body = deserialize_raw!(raw, ServerToClientStatus);
+                        self.proxy.logger.info(format_args!("plugin message for {} on {} -> {:?}", self.username, body.channel, body.data));
+                        match body.channel.as_str() {
+                            "rustcord:send" => {
+                                return Some(ServerToClientStatus::ConnectNext(String::from_utf8_lossy(body.data.data.as_slice()).into()));
+                            }
+                            _ => {}
+                        }
+                    }
+                    _ => {}
                 }
+
+                if let Err(err) = self.streams.write_raw_packet(next_read).await {
+                    return Some(ServerToClientStatus::WriteErr(err));
+                }
+
+                None
+            }
+            Err(err) => {
+                return Some(ServerToClientStatus::OtherErr(err));
             }
         }
     }
@@ -359,7 +397,7 @@ impl UpstreamInner {
                 for id in ids {
                     tablist.remove(&id);
                 }
-            },
+            }
             _ => {}
         }
     }

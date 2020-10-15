@@ -5,14 +5,17 @@ use tokio::net::ToSocketAddrs;
 use mctokio::TcpConnection;
 use mcproto_rs::v1_15_2 as proto;
 use proto::Packet578 as Packet;
+use proto::PlayJoinGameSpec;
 use mcproto_rs::types::Chat;
 use anyhow::anyhow;
 
 pub type DownstreamConnection = Arc<DownstreamInner>;
 
 pub struct DownstreamInner {
+    pub target_addr: String,
     pub upstream: UpstreamConnection,
     pub streams: Streams,
+    pub join_game: PlayJoinGameSpec
 }
 
 pub enum DownstreamConnectErr {
@@ -34,10 +37,8 @@ impl From<std::io::Error> for DownstreamConnectErr {
 }
 
 impl DownstreamInner {
-    pub(crate) async fn connect<A: ToSocketAddrs + std::fmt::Debug + Clone>(
-        upstream: UpstreamConnection,
-        to: A,
-    ) -> Result<DownstreamConnection, DownstreamConnectErr>
+    pub(crate) async fn connect(upstream: UpstreamConnection, to: String)
+        -> Result<DownstreamConnection, DownstreamConnectErr>
     {
         let connection = TcpConnection::connect_to_server(to.clone()).await?;
         let (read, write) = connection.into_split();
@@ -48,8 +49,8 @@ impl DownstreamInner {
             write,
             proto::State::Handshaking);
 
-        use Packet::{Handshake, LoginStart, LoginSuccess, LoginSetCompression, LoginEncryptionRequest, LoginDisconnect};
-        use proto::{HandshakeSpec, HandshakeNextState, LoginStartSpec};
+        use Packet::{Handshake, LoginStart, LoginSuccess, LoginSetCompression, LoginEncryptionRequest, LoginDisconnect, PlayJoinGame, PlayClientPluginMessage};
+        use proto::{HandshakeSpec, HandshakeNextState, LoginStartSpec, PlayClientPluginMessageSpec};
 
         streams.write_packet(Handshake(HandshakeSpec{
             next_state: HandshakeNextState::Login,
@@ -89,9 +90,24 @@ impl DownstreamInner {
             }
         }
 
+        let join_game = match streams.must_read_next_packet().await? {
+            PlayJoinGame(body) => body,
+            other => {
+                return Err(anyhow!("unexpected packet {:?}", other).into())
+            }
+        };
+
+        // register plugin channels
+        streams.write_packet(PlayClientPluginMessage(PlayClientPluginMessageSpec{
+            channel: "minecraft:register".to_owned(),
+            data: "rustcord:send".bytes().collect::<Vec<_>>().into()
+        })).await?;
+
         Ok(Arc::new(Self {
+            target_addr: to,
             upstream,
             streams,
+            join_game,
         }))
     }
 }
