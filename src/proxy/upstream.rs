@@ -138,7 +138,7 @@ impl UpstreamInner {
     pub async fn serve(self: &UpstreamConnection) {
         let mut res = self.connect_default().await;
         loop {
-            match &res {
+            match res {
                 ForwardingStatus::ClientDisconnected(err) => {
                     // nothing we can do, drop
                     self.proxy.logger.info(format_args!("{} left the proxy", self.username));
@@ -170,7 +170,7 @@ impl UpstreamInner {
                 }
                 ForwardingStatus::ConnectNext(next) => {
                     self.proxy.logger.info(format_args!("{} wants to connect to {}", self.username, next));
-                    res = self.connect_named(next).await;
+                    res = self.connect_named(&next).await;
                 }
                 ForwardingStatus::OtherErr(err) => {
                     let msg = format!("&cerror: &r{:?}", err);
