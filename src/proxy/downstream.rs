@@ -18,6 +18,7 @@ pub struct DownstreamInner {
     pub join_game: PlayJoinGameSpec
 }
 
+#[derive(Debug)]
 pub enum DownstreamConnectErr {
     Kicked(Chat),
     OnlineMode,

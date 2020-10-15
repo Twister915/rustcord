@@ -39,9 +39,10 @@ pub struct UpstreamBridges {
     pub tablist_members: HashSet<UUID4>,
 }
 
+#[derive(Debug)]
 pub enum ForwardingStatus {
     ClientDisconnected(Option<anyhow::Error>),
-    ServerDisconnected(Option<anyhow::Error>),
+    ServerDisconnected(Option<anyhow::Error>, String),
     KickedByServer(Chat),
     KickedByProxy,
     ClientBadPacket(anyhow::Error),
@@ -50,9 +51,10 @@ pub enum ForwardingStatus {
     OtherErr(anyhow::Error),
 }
 
+#[derive(Debug)]
 enum ClientToServerStatus {
     Disconnected,
-    WriteErr(anyhow::Error),
+    WriteErr(anyhow::Error, String),
     BadPacket(anyhow::Error),
     OtherErr(anyhow::Error),
 }
@@ -63,14 +65,15 @@ impl Into<ForwardingStatus> for ClientToServerStatus {
         match self {
             Disconnected => ForwardingStatus::ClientDisconnected(None),
             BadPacket(err) => ForwardingStatus::ClientBadPacket(err),
-            WriteErr(err) => ForwardingStatus::ServerDisconnected(Some(err)),
+            WriteErr(err, name) => ForwardingStatus::ServerDisconnected(Some(err), name),
             OtherErr(err) => ForwardingStatus::OtherErr(err),
         }
     }
 }
 
+#[derive(Debug)]
 enum ServerToClientStatus {
-    Disconnected,
+    Disconnected(String),
     Kicked(Chat),
     ConnectNext(String),
     BadPacket(anyhow::Error),
@@ -83,7 +86,7 @@ impl Into<ForwardingStatus> for ServerToClientStatus {
         use ServerToClientStatus::*;
         match self {
             ConnectNext(next) => ForwardingStatus::ConnectNext(next),
-            Disconnected => ForwardingStatus::ServerDisconnected(None),
+            Disconnected(name) => ForwardingStatus::ServerDisconnected(None, name),
             Kicked(msg) => ForwardingStatus::KickedByServer(msg),
             BadPacket(err) => ForwardingStatus::ServerBadPacket(err),
             WriteErr(err) => ForwardingStatus::ClientDisconnected(Some(err)),
@@ -138,15 +141,16 @@ impl UpstreamInner {
             match &res {
                 ForwardingStatus::ClientDisconnected(err) => {
                     // nothing we can do, drop
+                    self.proxy.logger.info(format_args!("{} left the proxy", self.username));
                     self.take_streams_disconnect().await; // ignore error
                     return;
                 }
-                ForwardingStatus::ServerDisconnected(err) => {
+                ForwardingStatus::ServerDisconnected(err, name) => {
                     // try to connect to another default?
+                    self.proxy.logger.info(format_args!("{} was disconnected from downstream {}", self.username, name));
                     res = self.connect_default().await;
                 }
                 ForwardingStatus::KickedByServer(msg) => {
-                    // todo handle
                     self.kick_or_log(msg.clone()).await;
                     return;
                 }
@@ -165,6 +169,7 @@ impl UpstreamInner {
                     return;
                 }
                 ForwardingStatus::ConnectNext(next) => {
+                    self.proxy.logger.info(format_args!("{} wants to connect to {}", self.username, next));
                     res = self.connect_named(next).await;
                 }
                 ForwardingStatus::OtherErr(err) => {
@@ -183,8 +188,9 @@ impl UpstreamInner {
             .nth(0) {
             self.connect_next(downstream_state, &next.name, next.address.clone()).await
         } else {
+            self.proxy.logger.info(format_args!("failed to connect {} to {} because {} does not exist", self.username, name, name));
             let msg = format!("&cserver &f{}&c does not exist!", name);
-            self.handle_connect_err(downstream_state, Chat::from_traditional(msg.as_str(), true)).await
+            self.handle_connect_err(downstream_state, name, Chat::from_traditional(msg.as_str(), true)).await
         }
     }
 
@@ -210,25 +216,27 @@ impl UpstreamInner {
         if let Some(current) = &state.connected_to {
             if current.target_addr == to {
                 let msg = format!("&calready connected to &f{}", name);
-                return self.handle_connect_err(state, Chat::from_traditional(msg.as_str(), true)).await;
+                return self.handle_connect_err(state, name, Chat::from_traditional(msg.as_str(), true)).await;
             }
         }
 
+        self.proxy.logger.info(format_args!("connecting {} to downstream {}", self.username, name));
         match DownstreamInner::connect(self.clone(), to).await {
             Ok(pending) => {
                 state.pending_next.replace(pending);
             }
             Err(err) => {
+                self.proxy.logger.warning(format_args!("failed to connect {} to {} because of {:?}", self.username, name, err));
                 return match err {
                     DownstreamConnectErr::Kicked(message) => {
                         ForwardingStatus::KickedByServer(message)
                     }
                     DownstreamConnectErr::OnlineMode => {
-                        self.handle_connect_err(state, Chat::from_traditional("&cServer is in Online Mode!", true)).await
+                        self.handle_connect_err(state, name, Chat::from_traditional("&cServer is in Online Mode!", true)).await
                     }
                     DownstreamConnectErr::Other(err) => {
                         let msg = format!("&cfailed to connect to {}: &f{}", name, err.root_cause().to_string());
-                        self.handle_connect_err(state, Chat::from_traditional(msg.as_str(), true)).await
+                        self.handle_connect_err(state, name, Chat::from_traditional(msg.as_str(), true)).await
                     }
                 };
             }
@@ -237,11 +245,11 @@ impl UpstreamInner {
         if state.connected_to.is_some() {
             self.join_next_pending_downstream(state).await
         } else {
-            self.join_initial_downstream(state).await
+            self.join_initial_downstream(name, state).await
         }
     }
 
-    async fn handle_connect_err(self: &UpstreamConnection, mut state: MutexGuard<'_, UpstreamBridges>, msg: Chat) -> ForwardingStatus {
+    async fn handle_connect_err(self: &UpstreamConnection, mut state: MutexGuard<'_, UpstreamBridges>, name: &String, msg: Chat) -> ForwardingStatus {
         state.pending_next.take();
 
         if let Some(connected_to) = state.connected_to.as_ref() {
@@ -249,7 +257,7 @@ impl UpstreamInner {
                 self.proxy.logger.warning(format_args!("failed to notify client of error {:?} {:?}", msg, err));
                 ForwardingStatus::ClientDisconnected(None)
             } else {
-                self.forward_forever(connected_to.clone()).await
+                self.forward_forever(name, connected_to.clone()).await
             }
         } else {
             self.kick_or_log(msg.clone()).await;
@@ -261,7 +269,7 @@ impl UpstreamInner {
         panic!("unimplemented")
     }
 
-    async fn join_initial_downstream(self: &UpstreamConnection, mut state: MutexGuard<'_, UpstreamBridges>) -> ForwardingStatus {
+    async fn join_initial_downstream(self: &UpstreamConnection, name: &String, mut state: MutexGuard<'_, UpstreamBridges>) -> ForwardingStatus {
         let pending = if let Some(next) = state.pending_next.take() {
             next
         } else {
@@ -274,12 +282,12 @@ impl UpstreamInner {
             return ForwardingStatus::ClientDisconnected(Some(err));
         }
 
-        self.forward_forever(pending).await
+        self.forward_forever(name, pending).await
     }
 
-    async fn forward_forever(self: &UpstreamConnection, to: DownstreamConnection) -> ForwardingStatus {
-        let mut client_to_server = self.forward_client_to_server_once(&to);
-        let mut server_to_client = self.forward_server_to_client_once(&to);
+    async fn forward_forever(self: &UpstreamConnection, name: &String, to: DownstreamConnection) -> ForwardingStatus {
+        let mut client_to_server = self.forward_client_to_server_once(name, &to);
+        let mut server_to_client = self.forward_server_to_client_once(name, &to);
 
         loop {
             let mut c2s = unsafe { Pin::new_unchecked(&mut client_to_server) };
@@ -290,22 +298,22 @@ impl UpstreamInner {
                         s2c.await; // drop this
                         return result.into();
                     } else {
-                        client_to_server = self.forward_client_to_server_once(&to);
+                        client_to_server = self.forward_client_to_server_once(name, &to);
                     }
                 }
                 result = &mut s2c => {
                     if let Some(result) = result {
-                        c2s.await; // drop this
+                        c2s.await;
                         return result.into();
                     } else {
-                        server_to_client = self.forward_server_to_client_once(&to);
+                        server_to_client = self.forward_server_to_client_once(name, &to);
                     }
                 }
             }
         }
     }
 
-    async fn forward_client_to_server_once(self: &UpstreamConnection, to: &DownstreamConnection) -> Option<ClientToServerStatus> {
+    async fn forward_client_to_server_once(self: &UpstreamConnection, name: &String, to: &DownstreamConnection) -> Option<ClientToServerStatus> {
         match self.streams.reader().await.as_mut() {
             Ok(bridge) => {
                 let next_read = match bridge.read_packet().await {
@@ -319,7 +327,7 @@ impl UpstreamInner {
                 };
 
                 if let Err(err) = to.streams.write_raw_packet(next_read).await {
-                    return Some(ClientToServerStatus::WriteErr(err));
+                    return Some(ClientToServerStatus::WriteErr(err, name.clone()));
                 }
 
                 None
@@ -330,7 +338,7 @@ impl UpstreamInner {
         }
     }
 
-    async fn forward_server_to_client_once(self: &UpstreamConnection, from: &DownstreamConnection) -> Option<ServerToClientStatus> {
+    async fn forward_server_to_client_once(self: &UpstreamConnection, name: &String, from: &DownstreamConnection) -> Option<ServerToClientStatus> {
         match from.streams.reader().await.as_mut() {
             Ok(bridge) => {
                 let next_read = match bridge.read_packet().await {
@@ -339,7 +347,7 @@ impl UpstreamInner {
                     }
                     Ok(Some(next_read)) => next_read,
                     Ok(None) => {
-                        return Some(ServerToClientStatus::Disconnected);
+                        return Some(ServerToClientStatus::Disconnected(name.clone()));
                     }
                 };
 
@@ -355,7 +363,6 @@ impl UpstreamInner {
                     }
                     PlayServerPluginMessage(raw) => {
                         let body = deserialize_raw!(raw, ServerToClientStatus);
-                        self.proxy.logger.info(format_args!("plugin message for {} on {} -> {:?}", self.username, body.channel, body.data));
                         match body.channel.as_str() {
                             "rustcord:send" => {
                                 return Some(ServerToClientStatus::ConnectNext(String::from_utf8_lossy(body.data.data.as_slice()).into()));
@@ -440,6 +447,11 @@ impl UpstreamInner {
             if self.is_in_players.compare_and_swap(true, false, Ordering::SeqCst) {
                 self.proxy.has_disconnected(&self.id).await;
             }
+
+            let mut downstream = self.downstream.lock().await;
+            downstream.connected_to.take();
+            downstream.pending_next.take();
+
             Ok((reader, writer))
         } else {
             Err(anyhow!("user is already disconnected, can't take streams"))
