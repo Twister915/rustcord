@@ -3,8 +3,8 @@ use crate::proxy::util::Streams;
 use mcproto_rs::uuid::UUID4;
 use std::net::SocketAddr;
 use mcproto_rs::v1_15_2 as proto;
-use proto::{HandshakeSpec, Packet578 as Packet, RawPacket578 as RawPacket, LoginDisconnectSpec, PlayDisconnectSpec, State, PlayServerChatMessageSpec, ChatPosition};
-use mcproto_rs::types::Chat;
+use proto::{HandshakeSpec, Packet578 as Packet, RawPacket578 as RawPacket, RawPacket578Body as RawPacketBody, LoginDisconnectSpec, PlayDisconnectSpec, State, PlayServerChatMessageSpec, ChatPosition};
+use mcproto_rs::types::{Chat, VarInt};
 use anyhow::{Result, anyhow};
 use crate::proxy::proxy::Proxy;
 use crate::proxy::downstream::{DownstreamConnection, DownstreamConnectErr, DownstreamInner};
@@ -31,12 +31,15 @@ pub struct UpstreamInner {
     pub properties: Vec<UserProperty>,
 
     pub downstream: Mutex<UpstreamBridges>,
+    pub plugin_channels: Mutex<HashSet<String>>,
+    pub dimension: Mutex<Option<proto::Dimension>>,
 }
 
 pub struct UpstreamBridges {
     pub connected_to: Option<DownstreamConnection>,
     pub pending_next: Option<DownstreamConnection>,
     pub tablist_members: HashSet<UUID4>,
+    pub client_entity_id: Option<i32>
 }
 
 #[derive(Debug)]
@@ -106,6 +109,14 @@ macro_rules! deserialize_raw {
     }
 }
 
+macro_rules! remap_entity_id_field {
+    ($bod: ident, $typ: ident, $field: ident, $remap: ident) => {
+        let mut packet = $bod.deserialize()?;
+        $remap(&mut packet.$field);
+        return Ok(Some(Packet::$typ(packet)));
+    }
+}
+
 impl UpstreamInner {
     pub(crate) fn create(
         streams: Streams,
@@ -130,8 +141,15 @@ impl UpstreamInner {
             downstream: Mutex::new(UpstreamBridges {
                 connected_to: None,
                 pending_next: None,
+                client_entity_id: None,
                 tablist_members: HashSet::default(),
             }),
+            plugin_channels: {
+                let mut out = HashSet::default();
+                out.insert("rustcord:send".to_owned());
+                Mutex::new(out)
+            },
+            dimension: Mutex::new(None),
         }
     }
 
@@ -243,7 +261,7 @@ impl UpstreamInner {
         }
 
         if state.connected_to.is_some() {
-            self.join_next_pending_downstream(state).await
+            self.join_next_pending_downstream(name, state).await
         } else {
             self.join_initial_downstream(name, state).await
         }
@@ -265,8 +283,56 @@ impl UpstreamInner {
         }
     }
 
-    async fn join_next_pending_downstream(self: &UpstreamConnection, state: MutexGuard<'_, UpstreamBridges>) -> ForwardingStatus {
-        panic!("unimplemented")
+    async fn join_next_pending_downstream(self: &UpstreamConnection, name: &String, mut state: MutexGuard<'_, UpstreamBridges>) -> ForwardingStatus {
+        let next = state.pending_next.take().expect("has pending_next");
+        let prev = state.connected_to.take().expect("has current connection");
+
+        use Packet::*;
+        use proto::{PlayRespawnSpec, PlayUpdateViewDistanceSpec};
+        use proto::Dimension;
+        let mut dimension_mutex = self.dimension.lock().await;
+        let cur_dimension = dimension_mutex.expect("has current dimension");
+        if next.join_game.dimension == cur_dimension {
+            let fake_dimension = match cur_dimension {
+                Dimension::Nether => Dimension::Overworld,
+                Dimension::Overworld => Dimension::Nether,
+                Dimension::End => Dimension::Nether,
+            };
+
+            if let Err(err) = self.streams.write_packet(PlayRespawn(PlayRespawnSpec{
+                dimension: fake_dimension,
+                hashed_seed: next.join_game.hashed_seed.clone(),
+                gamemode: next.join_game.gamemode.clone(),
+                level_type: next.join_game.level_type.clone(),
+            })).await {
+                return ForwardingStatus::ServerDisconnected(Some(err), name.clone());
+            }
+        }
+
+        if let Err(err) = self.streams.write_packet(PlayRespawn(PlayRespawnSpec{
+            dimension: next.join_game.dimension.clone(),
+            hashed_seed: next.join_game.hashed_seed.clone(),
+            gamemode: next.join_game.gamemode.clone(),
+            level_type: next.join_game.level_type.clone(),
+        })).await {
+            return ForwardingStatus::ServerDisconnected(Some(err), name.clone());
+        }
+
+        *dimension_mutex = Some(next.join_game.dimension.clone());
+
+        if let Err(err) = self.streams.write_packet(PlayUpdateViewDistance(PlayUpdateViewDistanceSpec{
+            view_distance: next.join_game.view_distance,
+        })).await {
+            return ForwardingStatus::ServerDisconnected(Some(err), name.clone());
+        }
+
+        prev.streams.take().await;
+
+        state.connected_to = Some(next.clone());
+        std::mem::drop(state);
+
+
+        self.forward_forever(name, next).await
     }
 
     async fn join_initial_downstream(self: &UpstreamConnection, name: &String, mut state: MutexGuard<'_, UpstreamBridges>) -> ForwardingStatus {
@@ -276,11 +342,14 @@ impl UpstreamInner {
             return ForwardingStatus::OtherErr(anyhow!("no pending downstream..."));
         };
         state.connected_to = Some(pending.clone());
+        state.client_entity_id = Some(pending.join_game.entity_id);
         std::mem::drop(state);
 
         if let Err(err) = self.streams.write_packet(Packet::PlayJoinGame(pending.join_game.clone())).await {
             return ForwardingStatus::ClientDisconnected(Some(err));
         }
+
+        *self.dimension.lock().await = Some(pending.join_game.dimension);
 
         self.forward_forever(name, pending).await
     }
@@ -326,11 +395,46 @@ impl UpstreamInner {
                     }
                 };
 
-                if let Err(err) = to.streams.write_raw_packet(next_read).await {
-                    return Some(ClientToServerStatus::WriteErr(err, name.clone()));
-                }
+                use RawPacket::*;
+                let result = match next_read {
+                    PlayClientPluginMessage(raw) => {
+                        let body = deserialize_raw!(raw, ClientToServerStatus);
+                        let is_register = match body.channel.as_str() {
+                            "REGISTER" => true,
+                            "register" => true,
+                            "minecraft:register" => true,
+                            _ => false
+                        };
+                        if is_register {
+                            let mut all_channels = self.plugin_channels.lock().await;
+                            let mut new = HashSet::new();
+                            for channel in body.data.data.split(|b| *b == 0x00) {
+                                let channel = String::from_utf8_lossy(channel).to_string();
+                                if all_channels.insert(channel.clone()) {
+                                    new.insert(channel);
+                                }
+                            }
 
-                None
+                            if !new.is_empty() {
+                                let channels = new.iter().cloned().collect::<Vec<_>>();
+                                to.register_plugin_channels(channels).await
+                            } else {
+                                Ok(())
+                            }
+                        } else {
+                            to.streams.write_raw_packet(PlayClientPluginMessage(raw)).await
+                        }
+                    },
+                    other => {
+                        to.streams.write_raw_packet(other).await
+                    }
+                };
+
+                if let Err(err) = result {
+                    Some(ClientToServerStatus::WriteErr(err, name.clone()))
+                } else {
+                    None
+                }
             }
             Err(err) => {
                 return Some(ClientToServerStatus::OtherErr(err));
@@ -370,10 +474,26 @@ impl UpstreamInner {
                             _ => {}
                         }
                     }
+                    PlayRespawn(raw) => {
+                        let body = deserialize_raw!(raw, ServerToClientStatus);
+                        *self.dimension.lock().await = Some(body.dimension)
+                    }
                     _ => {}
                 }
 
-                if let Err(err) = self.streams.write_raw_packet(next_read).await {
+                let write_result = match self.rewrite_entity_clientbound(&next_read).await {
+                    Ok(Some(changed)) => {
+                        self.streams.write_packet(changed).await
+                    },
+                    Ok(None) => {
+                        self.streams.write_raw_packet(next_read).await
+                    },
+                    Err(err) => {
+                        return Some(ServerToClientStatus::OtherErr(err))
+                    }
+                };
+
+                if let Err(err) = write_result {
                     return Some(ServerToClientStatus::WriteErr(err));
                 }
 
@@ -448,13 +568,80 @@ impl UpstreamInner {
                 self.proxy.has_disconnected(&self.id).await;
             }
 
-            let mut downstream = self.downstream.lock().await;
-            downstream.connected_to.take();
-            downstream.pending_next.take();
+            if let Ok(mut downstream) = self.downstream.try_lock() {
+                downstream.connected_to.take();
+                downstream.pending_next.take();
+            }
 
             Ok((reader, writer))
         } else {
             Err(anyhow!("user is already disconnected, can't take streams"))
+        }
+    }
+
+    async fn rewrite_entity_clientbound(self: &UpstreamConnection, raw_packet: &RawPacket<'_>) -> Result<Option<Packet>> {
+        let entity_ids = {
+            let downstream = self.downstream.lock().await;
+
+            downstream
+                .connected_to
+                .as_ref()
+                .map(move |v| v.join_game.entity_id)
+                .and_then(move |server_id| downstream.client_entity_id.as_ref()
+                    .filter(move |client_id| **client_id != server_id)
+                    .map(move |client_id| (*client_id, server_id)))
+        };
+
+        if entity_ids.is_none() {
+            return Ok(None);
+        }
+
+        let (mut client_id, mut server_id) = entity_ids.expect("exists");
+
+        let remap_id = |target: &mut i32| {
+            if *target == client_id {
+                *target = server_id
+            } else if *target == server_id {
+                *target = client_id
+            }
+        };
+
+        let remap_varint = |target: &mut VarInt| {
+            remap_id(&mut target.0)
+        };
+
+        match raw_packet {
+            RawPacket::PlaySpawnEntity(body) => {
+                let mut packet = body.deserialize()?;
+                let entity_type = packet.entity_type.0;
+                let is_arrow = entity_type == 2;
+                let is_fishing_bobber = entity_type == 102;
+                let is_spectral_arrow = entity_type == 72;
+
+                if is_arrow || is_fishing_bobber || is_fishing_bobber {
+                    if is_arrow || is_spectral_arrow {
+                        packet.data -= 1;
+                    }
+
+                    remap_id(&mut packet.data);
+
+                    if is_arrow || is_spectral_arrow {
+                        packet.data += 1;
+                    }
+                }
+
+                Ok(Some(Packet::PlaySpawnEntity(packet)))
+            },
+            RawPacket::PlaySpawnExperienceOrb(body) => {
+                remap_entity_id_field!(body, PlaySpawnExperienceOrb, entity_id, remap_varint);
+            }
+            RawPacket::PlaySpawnLivingEntity(body) => {
+                remap_entity_id_field!(body, PlaySpawnLivingEntity, entity_id, remap_varint);
+            }
+            RawPacket::PlaySpawnPainting(body) => {
+                remap_entity_id_field!(body, PlaySpawnPainting, entity_id, remap_varint);
+            },
+            _ => Ok(None)
         }
     }
 }
