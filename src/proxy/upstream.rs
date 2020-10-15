@@ -442,7 +442,7 @@ impl UpstreamInner {
         writer.write_packet(packet).await
     }
 
-    async fn take_streams_disconnect(&self) -> Result<(TcpReadBridge, TcpWriteBridge)> {
+    pub(crate) async fn take_streams_disconnect(&self) -> Result<(TcpReadBridge, TcpWriteBridge)> {
         if let Some((reader, writer)) = self.streams.take().await? {
             if self.is_in_players.compare_and_swap(true, false, Ordering::SeqCst) {
                 self.proxy.has_disconnected(&self.id).await;

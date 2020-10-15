@@ -136,10 +136,19 @@ impl InitialUpstreamHandler {
                 server_id: server_id.clone(),
             })).await?;
 
-            let response = match self.streams.must_read_next_packet().await? {
-                LoginEncryptionResponse(body) => body,
-                other => {
-                    return Err(anyhow!("unexpected packet {:?}", other));
+            let response = match self.streams.read_next_packet().await? {
+                Some(next) => {
+                    match next {
+                        LoginEncryptionResponse(body) => body,
+                        other => {
+                            return Err(anyhow!("unexpected packet {:?}", other));
+                        }
+                    }
+                }
+                None => {
+                    // client aborted because of bad session
+                    self.proxy.logger.info(format_args!("client {} aborted login", login_start.name));
+                    return Ok(());
                 }
             };
 
@@ -212,7 +221,20 @@ impl InitialUpstreamHandler {
         );
 
         let upstream = proxy.has_joined(upstream_inner).await?;
-        upstream.serve().await;
+        if let Err(err) = tokio::spawn({
+            let upstream = upstream.clone();
+            async move {
+                upstream.serve().await;
+            }
+        }).await {
+            upstream.proxy.logger.error(format_args!(
+                "failure while handling upstream conn from {} for {} :: {:?}",
+                upstream.remote_addr.ip(),
+                upstream.username,
+                err));
+
+            upstream.take_streams_disconnect().await;
+        }
         Ok(())
     }
 }
