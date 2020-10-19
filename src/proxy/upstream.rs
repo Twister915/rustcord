@@ -3,7 +3,7 @@ use crate::proxy::util::Streams;
 use mcproto_rs::uuid::UUID4;
 use std::net::SocketAddr;
 use mcproto_rs::v1_15_2 as proto;
-use proto::{HandshakeSpec, Packet578 as Packet, RawPacket578 as RawPacket, RawPacket578Body as RawPacketBody, LoginDisconnectSpec, PlayDisconnectSpec, State, PlayServerChatMessageSpec, ChatPosition};
+use proto::{HandshakeSpec, Packet578 as Packet, RawPacket578 as RawPacket, LoginDisconnectSpec, PlayDisconnectSpec, State, PlayServerChatMessageSpec, ChatPosition};
 use mcproto_rs::types::{Chat, VarInt};
 use anyhow::{Result, anyhow};
 use crate::proxy::proxy::Proxy;
@@ -12,7 +12,6 @@ use mctokio::{TcpReadBridge, TcpWriteBridge};
 use std::sync::atomic::{AtomicBool, Ordering};
 use crate::proxy::auth::UserProperty;
 use tokio::sync::{Mutex, MutexGuard};
-use tokio::net::ToSocketAddrs;
 use std::collections::HashSet;
 use std::pin::Pin;
 
@@ -291,7 +290,7 @@ impl UpstreamInner {
         use proto::{PlayRespawnSpec, PlayUpdateViewDistanceSpec};
         use proto::Dimension;
         let mut dimension_mutex = self.dimension.lock().await;
-        let cur_dimension = dimension_mutex.expect("has current dimension");
+        let cur_dimension = dimension_mutex.as_ref().cloned().expect("has current dimension");
         if next.join_game.dimension == cur_dimension {
             let fake_dimension = match cur_dimension {
                 Dimension::Nether => Dimension::Overworld,
@@ -349,7 +348,7 @@ impl UpstreamInner {
             return ForwardingStatus::ClientDisconnected(Some(err));
         }
 
-        *self.dimension.lock().await = Some(pending.join_game.dimension);
+        *self.dimension.lock().await = Some(pending.join_game.dimension.clone());
 
         self.forward_forever(name, pending).await
     }
@@ -596,7 +595,7 @@ impl UpstreamInner {
             return Ok(None);
         }
 
-        let (mut client_id, mut server_id) = entity_ids.expect("exists");
+        let (client_id, server_id) = entity_ids.expect("exists");
 
         let remap_id = |target: &mut i32| {
             if *target == client_id {
@@ -640,7 +639,11 @@ impl UpstreamInner {
             }
             RawPacket::PlaySpawnPainting(body) => {
                 remap_entity_id_field!(body, PlaySpawnPainting, entity_id, remap_varint);
-            },
+            }
+            // RawPacket::PlaySpawnPlayer(body) => {
+            //     let packet = body.deserialize()?;
+            //     self.proxy.players.lock().await.player_by_id(packet.uuid).
+            // }
             _ => Ok(None)
         }
     }

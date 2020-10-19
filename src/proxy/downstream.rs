@@ -1,7 +1,6 @@
 use crate::proxy::upstream::UpstreamConnection;
 use crate::proxy::util::{Streams, StreamsInner};
 use std::sync::Arc;
-use tokio::net::ToSocketAddrs;
 use mctokio::TcpConnection;
 use mcproto_rs::v1_15_2 as proto;
 use proto::Packet578 as Packet;
@@ -50,8 +49,8 @@ impl DownstreamInner {
             write,
             proto::State::Handshaking);
 
-        use Packet::{Handshake, LoginStart, LoginSuccess, LoginSetCompression, LoginEncryptionRequest, LoginDisconnect, PlayJoinGame, PlayClientPluginMessage};
-        use proto::{HandshakeSpec, HandshakeNextState, LoginStartSpec, PlayClientPluginMessageSpec};
+        use Packet::{Handshake, LoginStart, LoginSuccess, LoginSetCompression, LoginEncryptionRequest, LoginDisconnect, PlayJoinGame};
+        use proto::{HandshakeSpec, HandshakeNextState, LoginStartSpec};
 
         streams.write_packet(Handshake(HandshakeSpec {
             next_state: HandshakeNextState::Login,
