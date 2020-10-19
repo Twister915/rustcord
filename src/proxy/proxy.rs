@@ -8,7 +8,7 @@ use anyhow::{Result, anyhow};
 use crate::proxy::logger::Logger;
 use tokio::net::TcpListener;
 use mctokio::TcpConnection;
-use crate::proxy::util::StreamsInner;
+use crate::proxy::util::{StreamsInner, offline_id_for};
 use mcproto_rs::v1_15_2::State;
 use crate::proxy::initial::InitialUpstreamHandler;
 use rsa::{PaddingScheme, PublicKey, RSAPrivateKey};
@@ -78,6 +78,8 @@ impl ProxyInner {
     pub(crate) async fn has_disconnected(&self, id: &UUID4) {
         let mut players = self.players.lock().await;
         if let Some(player) = players.by_id.remove(id) {
+            let offline_id = offline_id_for(player.username.as_str());
+            players.by_offline_id.remove(&offline_id);
             let lower_name = player.username.to_lowercase();
             players.by_username.remove(&lower_name);
         }
@@ -110,6 +112,7 @@ impl ProxyInner {
 
 pub struct Players {
     by_id: HashMap<UUID4, UpstreamConnection>,
+    by_offline_id: HashMap<UUID4, UpstreamConnection>,
     by_username: HashMap<String, UpstreamConnection>,
 }
 
@@ -117,6 +120,7 @@ impl Players {
     fn new() -> Self {
         Self {
             by_id: HashMap::new(),
+            by_offline_id: HashMap::new(),
             by_username: HashMap::new(),
         }
     }
@@ -131,12 +135,17 @@ impl Players {
         let shared = Arc::new(player);
         self.by_id.insert(shared.id.clone(), shared.clone());
         self.by_username.insert(name_key, shared.clone());
+        self.by_offline_id.insert(offline_id_for(shared.username.as_str()), shared.clone());
         shared.mark_connected();
         Ok(shared)
     }
 
     pub fn player_by_id(&self, id: &UUID4) -> Option<UpstreamConnection> {
         self.by_id.get(&id).cloned()
+    }
+
+    pub fn player_by_offline_id(&self, id: &UUID4) -> Option<UpstreamConnection> {
+        self.by_offline_id.get(&id).cloned()
     }
 
     pub fn player_by_name(&self, name: &String) -> Option<UpstreamConnection> {

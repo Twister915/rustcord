@@ -1,9 +1,8 @@
 use anyhow::Result;
-use crypto::digest::Digest;
-use crypto::sha1::Sha1;
 use mcproto_rs::utils::hex;
 use mcproto_rs::uuid::UUID4;
 use serde::{Deserialize, Serialize};
+use sha1::Sha1;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct HasJoinedRequest {
@@ -65,9 +64,8 @@ impl ServerHashComponents {
 #[inline]
 fn mc_sha1(input: &[u8]) -> String {
     let mut sha1 = Sha1::new();
-    sha1.input(input);
-    let mut out = vec![0u8; sha1.output_bytes()];
-    sha1.result(&mut out);
+    sha1.update(input);
+    let mut out = sha1.digest().bytes();
 
     let is_negative = out[0] & 0x80 != 0;
     if is_negative {

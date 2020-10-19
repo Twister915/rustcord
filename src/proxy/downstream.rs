@@ -44,7 +44,7 @@ impl DownstreamInner {
         let (read, write) = connection.into_split();
         let streams = StreamsInner::create(
             upstream.proxy.clone(),
-            format!("upstream to {:?} for {}", to, upstream.username),
+            format!("downstream to {:?} for {}", to, upstream.username),
             read,
             write,
             proto::State::Handshaking);

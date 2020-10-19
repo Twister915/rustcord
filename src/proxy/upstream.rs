@@ -11,9 +11,11 @@ use crate::proxy::downstream::{DownstreamConnection, DownstreamConnectErr, Downs
 use mctokio::{TcpReadBridge, TcpWriteBridge};
 use std::sync::atomic::{AtomicBool, Ordering};
 use crate::proxy::auth::UserProperty;
-use tokio::sync::{Mutex, MutexGuard};
+use tokio::sync::{Mutex, MutexGuard, RwLock};
 use std::collections::HashSet;
 use std::pin::Pin;
+use mcproto_rs::protocol::PacketErr;
+use mcproto_rs::v1_15_2::TeamAction;
 
 pub type UpstreamConnection = Arc<UpstreamInner>;
 
@@ -32,13 +34,22 @@ pub struct UpstreamInner {
     pub downstream: Mutex<UpstreamBridges>,
     pub plugin_channels: Mutex<HashSet<String>>,
     pub dimension: Mutex<Option<proto::Dimension>>,
+    pub tablist_members: Mutex<HashSet<UUID4>>,
+    pub entity_ids: RwLock<EntityIds>,
+    pub scoreboard_teams: Mutex<HashSet<String>>,
+    pub scoreboard_objectives: Mutex<HashSet<String>>,
+    pub boss_bars: Mutex<HashSet<UUID4>>,
+}
+
+#[derive(Default, Debug)]
+pub struct EntityIds {
+    pub client: Option<i32>,
+    pub server: Option<i32>,
 }
 
 pub struct UpstreamBridges {
     pub connected_to: Option<DownstreamConnection>,
     pub pending_next: Option<DownstreamConnection>,
-    pub tablist_members: HashSet<UUID4>,
-    pub client_entity_id: Option<i32>
 }
 
 #[derive(Debug)]
@@ -140,8 +151,6 @@ impl UpstreamInner {
             downstream: Mutex::new(UpstreamBridges {
                 connected_to: None,
                 pending_next: None,
-                client_entity_id: None,
-                tablist_members: HashSet::default(),
             }),
             plugin_channels: {
                 let mut out = HashSet::default();
@@ -149,6 +158,11 @@ impl UpstreamInner {
                 Mutex::new(out)
             },
             dimension: Mutex::new(None),
+            tablist_members: Mutex::new(HashSet::default()),
+            entity_ids: RwLock::new(EntityIds::default()),
+            scoreboard_teams: Mutex::new(HashSet::default()),
+            scoreboard_objectives: Mutex::new(HashSet::default()),
+            boss_bars: Mutex::new(HashSet::default()),
         }
     }
 
@@ -202,7 +216,8 @@ impl UpstreamInner {
         let downstream_state = self.downstream.lock().await;
         if let Some(next) = self.proxy.config.servers.iter()
             .filter(move |server| server.name.eq(name))
-            .nth(0) {
+            .nth(0)
+        {
             self.connect_next(downstream_state, &next.name, next.address.clone()).await
         } else {
             self.proxy.logger.info(format_args!("failed to connect {} to {} because {} does not exist", self.username, name, name));
@@ -268,13 +283,16 @@ impl UpstreamInner {
 
     async fn handle_connect_err(self: &UpstreamConnection, mut state: MutexGuard<'_, UpstreamBridges>, name: &String, msg: Chat) -> ForwardingStatus {
         state.pending_next.take();
+        let cloned = state.connected_to.as_ref().cloned();
 
-        if let Some(connected_to) = state.connected_to.as_ref() {
+        std::mem::drop(state);
+
+        if let Some(connected_to) = cloned {
             if let Err(err) = self.send_message(msg.clone()).await {
                 self.proxy.logger.warning(format_args!("failed to notify client of error {:?} {:?}", msg, err));
                 ForwardingStatus::ClientDisconnected(None)
             } else {
-                self.forward_forever(name, connected_to.clone()).await
+                self.forward_forever(name, connected_to).await
             }
         } else {
             self.kick_or_log(msg.clone()).await;
@@ -290,6 +308,8 @@ impl UpstreamInner {
         use proto::{PlayRespawnSpec, PlayUpdateViewDistanceSpec};
         use proto::Dimension;
         let mut dimension_mutex = self.dimension.lock().await;
+        let mut entity_ids_mutex = self.entity_ids.write().await;
+
         let cur_dimension = dimension_mutex.as_ref().cloned().expect("has current dimension");
         if next.join_game.dimension == cur_dimension {
             let fake_dimension = match cur_dimension {
@@ -298,7 +318,7 @@ impl UpstreamInner {
                 Dimension::End => Dimension::Nether,
             };
 
-            if let Err(err) = self.streams.write_packet(PlayRespawn(PlayRespawnSpec{
+            if let Err(err) = self.streams.write_packet(PlayRespawn(PlayRespawnSpec {
                 dimension: fake_dimension,
                 hashed_seed: next.join_game.hashed_seed.clone(),
                 gamemode: next.join_game.gamemode.clone(),
@@ -308,7 +328,7 @@ impl UpstreamInner {
             }
         }
 
-        if let Err(err) = self.streams.write_packet(PlayRespawn(PlayRespawnSpec{
+        if let Err(err) = self.streams.write_packet(PlayRespawn(PlayRespawnSpec {
             dimension: next.join_game.dimension.clone(),
             hashed_seed: next.join_game.hashed_seed.clone(),
             gamemode: next.join_game.gamemode.clone(),
@@ -319,7 +339,7 @@ impl UpstreamInner {
 
         *dimension_mutex = Some(next.join_game.dimension.clone());
 
-        if let Err(err) = self.streams.write_packet(PlayUpdateViewDistance(PlayUpdateViewDistanceSpec{
+        if let Err(err) = self.streams.write_packet(PlayUpdateViewDistance(PlayUpdateViewDistanceSpec {
             view_distance: next.join_game.view_distance,
         })).await {
             return ForwardingStatus::ServerDisconnected(Some(err), name.clone());
@@ -327,9 +347,16 @@ impl UpstreamInner {
 
         prev.streams.take().await;
 
+        entity_ids_mutex.server = Some(next.join_game.entity_id);
+
         state.connected_to = Some(next.clone());
         std::mem::drop(state);
+        std::mem::drop(dimension_mutex);
+        std::mem::drop(entity_ids_mutex);
 
+        if let Err(err) = self.clear_state_on_next_server().await {
+            return ForwardingStatus::ClientDisconnected(Some(err));
+        }
 
         self.forward_forever(name, next).await
     }
@@ -341,14 +368,20 @@ impl UpstreamInner {
             return ForwardingStatus::OtherErr(anyhow!("no pending downstream..."));
         };
         state.connected_to = Some(pending.clone());
-        state.client_entity_id = Some(pending.join_game.entity_id);
+
+        let mut entity_ids = self.entity_ids.write().await;
+        entity_ids.server = Some(pending.join_game.entity_id);
+        entity_ids.client = Some(pending.join_game.entity_id);
+        std::mem::drop(entity_ids);
         std::mem::drop(state);
 
         if let Err(err) = self.streams.write_packet(Packet::PlayJoinGame(pending.join_game.clone())).await {
             return ForwardingStatus::ClientDisconnected(Some(err));
         }
 
-        *self.dimension.lock().await = Some(pending.join_game.dimension.clone());
+        let mut dimension = self.dimension.lock().await;
+        *dimension = Some(pending.join_game.dimension.clone());
+        std::mem::drop(dimension);
 
         self.forward_forever(name, pending).await
     }
@@ -423,9 +456,15 @@ impl UpstreamInner {
                         } else {
                             to.streams.write_raw_packet(PlayClientPluginMessage(raw)).await
                         }
-                    },
+                    }
                     other => {
-                        to.streams.write_raw_packet(other).await
+                        match self.rewrite_entity_serverbound(&other).await {
+                            Ok(Some(packet)) => to.streams.write_packet(packet).await,
+                            Ok(None) => to.streams.write_raw_packet(other).await,
+                            Err(err) => {
+                                return Some(ClientToServerStatus::OtherErr(err.into()));
+                            }
+                        }
                     }
                 };
 
@@ -462,7 +501,22 @@ impl UpstreamInner {
                     }
                     PlayPlayerInfo(raw) => {
                         let body = deserialize_raw!(raw, ServerToClientStatus);
-                        self.handle_tablist_update(body).await;
+                        let mut tablist_members = self.tablist_members.lock().await;
+                        use proto::PlayerInfoActionList::*;
+                        match &body.actions {
+                            Add(players) => {
+                                for player in players {
+                                    tablist_members.insert(player.uuid);
+                                }
+                            },
+                            Remove(players) => {
+                                for player in players {
+                                    tablist_members.remove(player);
+                                }
+                            },
+                            _ => {}
+                        }
+                        std::mem::drop(tablist_members);
                     }
                     PlayServerPluginMessage(raw) => {
                         let body = deserialize_raw!(raw, ServerToClientStatus);
@@ -475,7 +529,54 @@ impl UpstreamInner {
                     }
                     PlayRespawn(raw) => {
                         let body = deserialize_raw!(raw, ServerToClientStatus);
-                        *self.dimension.lock().await = Some(body.dimension)
+                        let mut dimension = self.dimension.lock().await;
+                        *dimension = Some(body.dimension);
+                        std::mem::drop(dimension);
+                    }
+                    PlayScoreboardObjective(raw) => {
+                        let body = deserialize_raw!(raw, ServerToClientStatus);
+                        let mut scoreboard_objectives = self.scoreboard_objectives.lock().await;
+                        use proto::ScoreboardObjectiveAction::*;
+                        match &body.action {
+                            Create(_) => {
+                                scoreboard_objectives.insert(body.objective_name.clone());
+                            },
+                            Remove => {
+                                scoreboard_objectives.remove(&body.objective_name);
+                            },
+                            _ => {}
+                        }
+                        std::mem::drop(scoreboard_objectives);
+                    }
+                    PlayTeams(raw) => {
+                        let body = deserialize_raw!(raw, ServerToClientStatus);
+                        let mut scoreboard_teams = self.scoreboard_teams.lock().await;
+                        use proto::TeamAction::*;
+                        match &body.action {
+                            Create(_) => {
+                                scoreboard_teams.insert(body.team_name.clone());
+                            },
+                            Remove => {
+                                scoreboard_teams.remove(&body.team_name);
+                            },
+                            _ => {}
+                        }
+                        std::mem::drop(scoreboard_teams);
+                    }
+                    PlayBossBar(raw) => {
+                        let body = deserialize_raw!(raw, ServerToClientStatus);
+                        let mut boss_bars = self.boss_bars.lock().await;
+                        use proto::BossBarAction::*;
+                        match &body.action {
+                            Add(_) => {
+                                boss_bars.insert(body.uuid);
+                            },
+                            Remove => {
+                                boss_bars.remove(&body.uuid);
+                            },
+                            _ => {}
+                        }
+                        std::mem::drop(boss_bars);
                     }
                     _ => {}
                 }
@@ -483,12 +584,12 @@ impl UpstreamInner {
                 let write_result = match self.rewrite_entity_clientbound(&next_read).await {
                     Ok(Some(changed)) => {
                         self.streams.write_packet(changed).await
-                    },
+                    }
                     Ok(None) => {
                         self.streams.write_raw_packet(next_read).await
-                    },
+                    }
                     Err(err) => {
-                        return Some(ServerToClientStatus::OtherErr(err))
+                        return Some(ServerToClientStatus::OtherErr(err.into()));
                     }
                 };
 
@@ -504,28 +605,59 @@ impl UpstreamInner {
         }
     }
 
-    async fn handle_tablist_update(self: &UpstreamConnection, data: proto::PlayPlayerInfoSpec) {
-        use proto::PlayerInfoActionList::*;
-        match data.actions {
-            Add(adds) => {
-                let mut state = self.downstream.lock().await;
-                let tablist = &mut state.tablist_members;
-                for add in adds {
-                    let id = &add.uuid;
-                    if !tablist.contains(id) {
-                        tablist.insert(*id);
-                    }
-                }
-            }
-            Remove(ids) => {
-                let mut state = self.downstream.lock().await;
-                let tablist = &mut state.tablist_members;
-                for id in ids {
-                    tablist.remove(&id);
-                }
-            }
-            _ => {}
+    async fn clear_state_on_next_server(self: &UpstreamConnection) -> Result<()> {
+        self.send_clear_tablist().await?;
+        self.send_clear_bossbars().await?;
+        self.send_clear_scoreboard_objectives().await?;
+        self.send_clear_scoreboard_teams().await?;
+        Ok(())
+    }
+
+    async fn send_clear_tablist(self: &UpstreamConnection) -> Result<()> {
+        let mut members = self.tablist_members.lock().await;
+        let old_members: proto::VarIntCountedArray<UUID4> = members.drain().collect::<Vec<_>>().into();
+        std::mem::drop(members);
+
+        self.streams.write_packet(Packet::PlayPlayerInfo(proto::PlayPlayerInfoSpec {
+            actions: proto::PlayerInfoActionList::Remove(old_members)
+        })).await?;
+        Ok(())
+    }
+
+    async fn send_clear_bossbars(self: &UpstreamConnection) -> Result<()> {
+        let mut bossbars = self.boss_bars.lock().await;
+        for boss_bar_id in bossbars.drain() {
+            self.streams.write_packet(Packet::PlayBossBar(proto::PlayBossBarSpec{
+                uuid: boss_bar_id,
+                action: proto::BossBarAction::Remove,
+            })).await?;
         }
+
+        Ok(())
+    }
+
+    async fn send_clear_scoreboard_objectives(self: &UpstreamConnection) -> Result<()> {
+        let mut objectives = self.scoreboard_objectives.lock().await;
+        for objective in objectives.drain() {
+            self.streams.write_packet(Packet::PlayScoreboardObjective(proto::PlayScoreboardObjectiveSpec{
+                objective_name: objective,
+                action: proto::ScoreboardObjectiveAction::Remove,
+            })).await?;
+        }
+
+        Ok(())
+    }
+
+    async fn send_clear_scoreboard_teams(self: &UpstreamConnection) -> Result<()> {
+        let mut teams = self.scoreboard_teams.lock().await;
+        for team in teams.drain() {
+            self.streams.write_packet(Packet::PlayTeams(proto::PlayTeamsSpec{
+                action: proto::TeamAction::Remove,
+                team_name: team,
+            })).await?;
+        }
+
+        Ok(())
     }
 
     pub(crate) fn mark_connected(self: &UpstreamConnection) {
@@ -578,24 +710,14 @@ impl UpstreamInner {
         }
     }
 
-    async fn rewrite_entity_clientbound(self: &UpstreamConnection, raw_packet: &RawPacket<'_>) -> Result<Option<Packet>> {
-        let entity_ids = {
-            let downstream = self.downstream.lock().await;
-
-            downstream
-                .connected_to
-                .as_ref()
-                .map(move |v| v.join_game.entity_id)
-                .and_then(move |server_id| downstream.client_entity_id.as_ref()
-                    .filter(move |client_id| **client_id != server_id)
-                    .map(move |client_id| (*client_id, server_id)))
+    //noinspection DuplicatedCode
+    async fn rewrite_entity_clientbound(self: &UpstreamConnection, raw_packet: &RawPacket<'_>) -> Result<Option<Packet>, PacketErr> {
+        let (client_id, server_id) = match self.get_remapped_id_pair().await {
+            Some(data) => data,
+            None => {
+                return Ok(None);
+            }
         };
-
-        if entity_ids.is_none() {
-            return Ok(None);
-        }
-
-        let (client_id, server_id) = entity_ids.expect("exists");
 
         let remap_id = |target: &mut i32| {
             if *target == client_id {
@@ -612,6 +734,8 @@ impl UpstreamInner {
         match raw_packet {
             RawPacket::PlaySpawnEntity(body) => {
                 let mut packet = body.deserialize()?;
+                remap_varint(&mut packet.entity_id);
+                // todo give better type stuff in mcproto-rs instead of using numeric ids here
                 let entity_type = packet.entity_type.0;
                 let is_arrow = entity_type == 2;
                 let is_fishing_bobber = entity_type == 102;
@@ -630,7 +754,7 @@ impl UpstreamInner {
                 }
 
                 Ok(Some(Packet::PlaySpawnEntity(packet)))
-            },
+            }
             RawPacket::PlaySpawnExperienceOrb(body) => {
                 remap_entity_id_field!(body, PlaySpawnExperienceOrb, entity_id, remap_varint);
             }
@@ -640,11 +764,138 @@ impl UpstreamInner {
             RawPacket::PlaySpawnPainting(body) => {
                 remap_entity_id_field!(body, PlaySpawnPainting, entity_id, remap_varint);
             }
-            // RawPacket::PlaySpawnPlayer(body) => {
-            //     let packet = body.deserialize()?;
-            //     self.proxy.players.lock().await.player_by_id(packet.uuid).
-            // }
+            RawPacket::PlaySpawnPlayer(body) => {
+                let mut packet = body.deserialize()?;
+                remap_varint(&mut packet.entity_id);
+                let players = self.proxy.players.lock().await;
+                if let Some(other) = players.player_by_offline_id(&packet.uuid) {
+                    packet.uuid = other.id;
+                }
+
+                Ok(Some(Packet::PlaySpawnPlayer(packet)))
+            }
+            RawPacket::PlayEntityAnimation(body) => {
+                remap_entity_id_field!(body, PlayEntityAnimation, entity_id, remap_varint);
+            }
+            RawPacket::PlayBlockBreakAnimation(body) => {
+                remap_entity_id_field!(body, PlayBlockBreakAnimation, entity_id, remap_varint);
+            }
+            RawPacket::PlayEntityStatus(body) => {
+                remap_entity_id_field!(body, PlayEntityStatus, entity_id, remap_id);
+            }
+            RawPacket::PlayEntityPosition(body) => {
+                remap_entity_id_field!(body, PlayEntityPosition, entity_id, remap_varint);
+            }
+            RawPacket::PlayEntityPositionAndRotation(body) => {
+                remap_entity_id_field!(body, PlayEntityPositionAndRotation, entity_id, remap_varint);
+            }
+            RawPacket::PlayEntityRotation(body) => {
+                remap_entity_id_field!(body, PlayEntityRotation, entity_id, remap_varint);
+            }
+            RawPacket::PlayEntityMovement(body) => {
+                remap_entity_id_field!(body, PlayEntityMovement, entity_id, remap_varint);
+            }
+            RawPacket::PlayRemoveEntityEffect(body) => {
+                remap_entity_id_field!(body, PlayRemoveEntityEffect, entity_id, remap_varint);
+            }
+            RawPacket::PlayEntityHeadLook(body) => {
+                remap_entity_id_field!(body, PlayEntityHeadLook, entity_id, remap_varint);
+            }
+            RawPacket::PlayCamera(body) => {
+                remap_entity_id_field!(body, PlayCamera, camera_id, remap_varint);
+            }
+            RawPacket::PlayEntityMetadata(body) => {
+                // todo the actual metadata section
+                remap_entity_id_field!(body, PlayEntityMetadata, entity_id, remap_varint);
+            }
+            RawPacket::PlayAttachEntity(body) => {
+                let mut packet = body.deserialize()?;
+                remap_id(&mut packet.attached_entity_id);
+                remap_id(&mut packet.holding_entity_id);
+                Ok(Some(Packet::PlayAttachEntity(packet)))
+            }
+            RawPacket::PlayEntityVelocity(body) => {
+                remap_entity_id_field!(body, PlayEntityVelocity, entity_id, remap_varint);
+            }
+            RawPacket::PlayEntityEquipment(body) => {
+                remap_entity_id_field!(body, PlayEntityEquipment, entity_id, remap_varint);
+            }
+            RawPacket::PlaySetPassengers(body) => {
+                let mut packet = body.deserialize()?;
+                remap_varint(&mut packet.entity_id);
+                for child in &mut packet.passenger_entitiy_ids {
+                    remap_varint(child);
+                }
+                Ok(Some(Packet::PlaySetPassengers(packet)))
+            }
+            RawPacket::PlayCollectItem(body) => {
+                let mut packet = body.deserialize()?;
+                remap_varint(&mut packet.collected_entity_id);
+                remap_varint(&mut packet.collector_entity_id);
+                Ok(Some(Packet::PlayCollectItem(packet)))
+            }
+            RawPacket::PlayEntityTeleport(body) => {
+                remap_entity_id_field!(body, PlayEntityTeleport, entity_id, remap_varint);
+            }
+            RawPacket::PlayEntityProperties(body) => {
+                remap_entity_id_field!(body, PlayEntityProperties, entity_id, remap_varint);
+            }
+            RawPacket::PlayEntityEffect(body) => {
+                remap_entity_id_field!(body, PlayEntityEffect, entity_id, remap_varint);
+            }
             _ => Ok(None)
         }
+    }
+
+    //noinspection DuplicatedCode
+    async fn rewrite_entity_serverbound(self: &UpstreamConnection, raw_packet: &RawPacket<'_>) -> Result<Option<Packet>, PacketErr> {
+        let (client_id, server_id) = match self.get_remapped_id_pair().await {
+            Some(data) => data,
+            None => {
+                return Ok(None);
+            }
+        };
+
+        let remap_id = |target: &mut i32| {
+            if *target == client_id {
+                *target = server_id
+            } else if *target == server_id {
+                *target = client_id
+            }
+        };
+
+        let remap_varint = |target: &mut VarInt| {
+            remap_id(&mut target.0)
+        };
+
+        match raw_packet {
+            RawPacket::PlayInteractEntity(body) => {
+                remap_entity_id_field!(body, PlayInteractEntity, entity_id, remap_varint);
+            }
+            RawPacket::PlayEntityAction(body) => {
+                remap_entity_id_field!(body, PlayEntityAction, entity_id, remap_varint);
+            }
+            RawPacket::PlaySpectate(body) => {
+                let mut packet = body.deserialize()?;
+                let players = self.proxy.players.lock().await;
+                if let Some(other) = players.player_by_offline_id(&packet.target) {
+                    packet.target = other.id;
+                }
+                Ok(Some(Packet::PlaySpectate(packet)))
+            }
+            _ => Ok(None)
+        }
+    }
+
+    async fn get_remapped_id_pair(self: &UpstreamConnection) -> Option<(i32, i32)> {
+        let entity_ids = self.entity_ids
+            .read()
+            .await;
+
+        entity_ids
+            .server
+            .and_then(move |server_id| entity_ids.client.as_ref()
+                .filter(move |client_id| **client_id != server_id)
+                .map(move |client_id| (*client_id, server_id)))
     }
 }

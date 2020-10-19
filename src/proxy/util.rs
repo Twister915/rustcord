@@ -4,6 +4,7 @@ use mcproto_rs::v1_15_2::{State, Packet578 as Packet, RawPacket578 as RawPacket}
 use anyhow::{Result, anyhow};
 use super::proxy::Proxy;
 use std::sync::Arc;
+use mcproto_rs::uuid::UUID4;
 
 pub type Streams = Arc<StreamsInner>;
 
@@ -154,4 +155,13 @@ impl<'a, T> OwnedOptionalGuard<'a, T> {
             Err(anyhow!("player disconnected..."))
         }
     }
+}
+
+pub fn offline_id_for(name: &str) -> UUID4 {
+    let key = format!("OfflinePlayer:{}", name);
+    let mut hash = md5::compute(key.as_bytes()).0;
+    hash[6] = hash[6] & 0x0f | 0x30;
+    hash[8] = hash[8] & 0x3f | 0x80;
+    let id_raw = u128::from_le_bytes(hash);
+    id_raw.into()
 }
