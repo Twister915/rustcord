@@ -627,7 +627,7 @@ dependencies = [
 [[package]]
 name = "mctokio"
 version = "0.1.0"
-source = "git+https://github.com/Twister915/mctokio?branch=master#7f94ca46ddd3fadf3596ecde66b611ccd31eef05"
+source = "git+https://github.com/Twister915/mctokio?branch=master#8ef4bc98bc28a959e45af4e83940f8f9fb59f39c"
 dependencies = [
  "aesni",
  "anyhow",
