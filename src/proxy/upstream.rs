@@ -15,7 +15,6 @@ use tokio::sync::{Mutex, MutexGuard, RwLock};
 use std::collections::HashSet;
 use std::pin::Pin;
 use mcproto_rs::protocol::PacketErr;
-use mcproto_rs::v1_15_2::TeamAction;
 
 pub type UpstreamConnection = Arc<UpstreamInner>;
 
@@ -505,12 +504,12 @@ impl UpstreamInner {
                         use proto::PlayerInfoActionList::*;
                         match &body.actions {
                             Add(players) => {
-                                for player in players {
+                                for player in players.iter() {
                                     tablist_members.insert(player.uuid);
                                 }
                             },
                             Remove(players) => {
-                                for player in players {
+                                for player in players.iter() {
                                     tablist_members.remove(player);
                                 }
                             },
@@ -615,7 +614,7 @@ impl UpstreamInner {
 
     async fn send_clear_tablist(self: &UpstreamConnection) -> Result<()> {
         let mut members = self.tablist_members.lock().await;
-        let old_members: proto::VarIntCountedArray<UUID4> = members.drain().collect::<Vec<_>>().into();
+        let old_members = members.drain().collect::<Vec<_>>().into();
         std::mem::drop(members);
 
         self.streams.write_packet(Packet::PlayPlayerInfo(proto::PlayPlayerInfoSpec {
@@ -812,7 +811,7 @@ impl UpstreamInner {
             }
             RawPacket::PlayDestroyEntities(body) => {
                 let mut packet = body.deserialize()?;
-                for id in &mut packet.entity_ids {
+                for id in packet.entity_ids.iter_mut() {
                     remap_varint(id);
                 }
                 Ok(Some(Packet::PlayDestroyEntities(packet)))
@@ -861,7 +860,7 @@ impl UpstreamInner {
             RawPacket::PlaySetPassengers(body) => {
                 let mut packet = body.deserialize()?;
                 remap_varint(&mut packet.entity_id);
-                for child in &mut packet.passenger_entitiy_ids {
+                for child in packet.passenger_entitiy_ids.iter_mut() {
                     remap_varint(child);
                 }
                 Ok(Some(Packet::PlaySetPassengers(packet)))

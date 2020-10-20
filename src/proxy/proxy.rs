@@ -21,6 +21,7 @@ pub struct ProxyInner {
     pub players: Mutex<Players>,
     pub logger: Logger,
     pub private_key: rsa::RSAPrivateKey,
+    pub favicon: Option<Vec<u8>>,
 }
 
 impl ProxyInner {
@@ -31,11 +32,18 @@ impl ProxyInner {
         let private_key = RSAPrivateKey::new(&mut rng, 1024)
             .map_err(move |err| anyhow!("rsa gen error: {:?}", err))?;
 
+        let favicon = config.load_favicon().await?;
+        if favicon.is_some() {
+            logger.info(format_args!(
+                "loaded favicon from {}",
+                config.favicon_location.as_ref().expect("is present")));
+        }
         logger.debug(format_args!("constructing proxy"));
         let out = Self {
             config,
             logger,
             private_key,
+            favicon,
             players: Mutex::new(Players::new()),
         };
 

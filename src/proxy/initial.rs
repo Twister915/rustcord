@@ -84,7 +84,10 @@ impl InitialUpstreamHandler {
                         .clone()
                         .unwrap_or("A Rust Minecraft Proxy".to_owned())
                         .as_str(),true),
-                favicon: None,
+                favicon: self.proxy.favicon.as_ref().map(move |data| StatusFaviconSpec {
+                    content_type: "image/png".to_owned(),
+                    data: data.clone(),
+                }),
                 version: StatusVersionSpec {
                     name: "mcprox-rs 1.15.2".to_owned(),
                     protocol: 578,
@@ -153,7 +156,7 @@ impl InitialUpstreamHandler {
             };
 
             let verify_token_from_client = self.proxy.decrypt_token(
-                response.verify_token.data.as_slice())?;
+                response.verify_token.as_slice())?;
 
             if verify_token_from_client != correct_verify_token {
                 self.streams.write_packet(LoginDisconnect(LoginDisconnectSpec{
@@ -164,7 +167,7 @@ impl InitialUpstreamHandler {
             }
 
             let shared_secret = self.proxy.decrypt_token(
-                response.shared_secret.data.as_slice())?;
+                response.shared_secret.as_slice())?;
 
             self.proxy.logger.info(format_args!("setup session with mojang for {} from {}", login_start.name, self.remote));
             let ip = self.remote.ip().to_string();

@@ -16,17 +16,18 @@ async fn main() -> Result<()> {
         bind_addresses: vec!["0.0.0.0:25565".to_owned()],
         max_players: 100,
         motd: Some("A Rust Minecraft Proxy".to_owned()),
+        favicon_location: Some("server-icon.png".to_owned()),
         servers: vec![
             proxy::config::TargetServerSpec {
                 name: "lobby".to_owned(),
                 address: "127.0.0.1:21000".to_owned(),
-                connect_to: true,
+                connect_to: false,
                 use_motd: false,
             },
             proxy::config::TargetServerSpec{
                 name: "other".to_owned(),
                 address: "127.0.0.1:21002".to_owned(),
-                connect_to: false,
+                connect_to: true,
                 use_motd: false,
             },
         ],
