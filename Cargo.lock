@@ -603,7 +603,7 @@ checksum = "7ffc5c5338469d4d3ea17d269fa8ea3512ad247247c30bd2df69e68309ed0a08"
 [[package]]
 name = "mcproto-rs"
 version = "0.2.0"
-source = "git+https://github.com/Twister915/mcproto-rs?branch=master#4599b962b9cd12da4d790a873606f96b4b3ed84e"
+source = "git+https://github.com/Twister915/mcproto-rs?branch=master#51d00fef7da09ae99bcd66f260ef37719dbf8878"
 dependencies = [
  "base64",
  "paste",
@@ -615,7 +615,7 @@ dependencies = [
 [[package]]
 name = "mctokio"
 version = "0.1.0"
-source = "git+https://github.com/Twister915/mctokio?branch=master#2b7006cddf51b8e1f8f348aadeea728ac374846b"
+source = "git+https://github.com/Twister915/mctokio?branch=master#8ee56560b85ca6c071043300e02cc1bd84f3ecc0"
 dependencies = [
  "aesni",
  "anyhow",
@@ -877,9 +877,9 @@ dependencies = [
 
 [[package]]
 name = "pin-project-lite"
-version = "0.1.10"
+version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e555d9e657502182ac97b539fb3dae8b79cda19e3e4f8ffb5e8de4f18df93c95"
+checksum = "c917123afa01924fc84bb20c4c03f004d9c38e5127e3c039bbf7f4b9c76a2f6b"
 
 [[package]]
 name = "pin-utils"

@@ -795,6 +795,28 @@ impl UpstreamInner {
             RawPacket::PlayEntityMovement(body) => {
                 remap_entity_id_field!(body, PlayEntityMovement, entity_id, remap_varint);
             }
+            RawPacket::PlayCombatEvent(body) => {
+                let mut packet = body.deserialize()?;
+                use proto::CombatEvent::*;
+                match &mut packet.event {
+                    End(body) => {
+                        remap_id(&mut body.entity_id);
+                    },
+                    EntityDead(body) => {
+                        remap_varint(&mut body.player_id);
+                        remap_id(&mut body.entity_id);
+                    }
+                    _ => {}
+                }
+                Ok(Some(Packet::PlayCombatEvent(packet)))
+            }
+            RawPacket::PlayDestroyEntities(body) => {
+                let mut packet = body.deserialize()?;
+                for id in &mut packet.entity_ids {
+                    remap_varint(id);
+                }
+                Ok(Some(Packet::PlayDestroyEntities(packet)))
+            }
             RawPacket::PlayRemoveEntityEffect(body) => {
                 remap_entity_id_field!(body, PlayRemoveEntityEffect, entity_id, remap_varint);
             }
@@ -805,8 +827,24 @@ impl UpstreamInner {
                 remap_entity_id_field!(body, PlayCamera, camera_id, remap_varint);
             }
             RawPacket::PlayEntityMetadata(body) => {
-                // todo the actual metadata section
-                remap_entity_id_field!(body, PlayEntityMetadata, entity_id, remap_varint);
+                let mut packet = body.deserialize()?;
+                remap_varint(&mut packet.entity_id);
+                use proto::EntityMetadataFieldData;
+                // fishing hook
+                if let Some(EntityMetadataFieldData::VarInt(v)) = packet.metadata.get_mut(7) {
+                    v.0 -= 1;
+                    remap_varint(v);
+                    v.0 += 1;
+                }
+                // fireworks (et al)
+                if let Some(EntityMetadataFieldData::VarInt(v)) = packet.metadata.get_mut(8) {
+                    remap_varint(v);
+                }
+                // guardian beam
+                if let Some(EntityMetadataFieldData::VarInt(v)) = packet.metadata.get_mut(16) {
+                    remap_varint(v);
+                }
+                Ok(Some(Packet::PlayEntityMetadata(packet)))
             }
             RawPacket::PlayAttachEntity(body) => {
                 let mut packet = body.deserialize()?;
@@ -827,6 +865,11 @@ impl UpstreamInner {
                     remap_varint(child);
                 }
                 Ok(Some(Packet::PlaySetPassengers(packet)))
+            }
+            RawPacket::PlayEntitySoundEffect(body) => {
+                let mut packet = body.deserialize()?;
+                remap_varint(&mut packet.entity_id);
+                Ok(Some(Packet::PlayEntitySoundEffect(packet)))
             }
             RawPacket::PlayCollectItem(body) => {
                 let mut packet = body.deserialize()?;
