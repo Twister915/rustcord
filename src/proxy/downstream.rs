@@ -2,9 +2,8 @@ use crate::proxy::upstream::UpstreamConnection;
 use crate::proxy::util::{Streams, StreamsInner};
 use std::sync::Arc;
 use mctokio::TcpConnection;
-use mcproto_rs::v1_15_2 as proto;
-use proto::Packet578 as Packet;
-use proto::PlayJoinGameSpec;
+use mcproto_rs::{v1_15_2 as proto, protocol::State};
+use proto::{Packet578 as Packet, PlayJoinGameSpec};
 use mcproto_rs::types::Chat;
 use anyhow::{anyhow, Result};
 
@@ -47,7 +46,7 @@ impl DownstreamInner {
             format!("downstream to {:?} for {}", to, upstream.username),
             read,
             write,
-            proto::State::Handshaking);
+            State::Handshaking);
 
         use Packet::{Handshake, LoginStart, LoginSuccess, LoginSetCompression, LoginEncryptionRequest, LoginDisconnect, PlayJoinGame};
         use proto::{HandshakeSpec, HandshakeNextState, LoginStartSpec};
@@ -63,7 +62,7 @@ impl DownstreamInner {
             server_port: upstream.handshake.server_port.clone(),
         })).await?;
 
-        streams.set_state(proto::State::Login).await?;
+        streams.set_state(State::Login).await?;
         streams.write_packet(LoginStart(LoginStartSpec {
             name: upstream.username.clone(),
         })).await?;
@@ -75,7 +74,7 @@ impl DownstreamInner {
                     streams.set_compression_threshold(Some(spec.threshold.0)).await?;
                 }
                 LoginSuccess(_) => {
-                    streams.set_state(proto::State::Play).await?;
+                    streams.set_state(State::Play).await?;
                     break;
                 }
                 LoginEncryptionRequest(_) => {

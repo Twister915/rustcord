@@ -1,10 +1,10 @@
+use super::proxy::Proxy;
 use tokio::sync::{Mutex, MutexGuard};
 use mctokio::{TcpReadBridge, TcpWriteBridge, Bridge};
-use mcproto_rs::v1_15_2::{State, Packet578 as Packet, RawPacket578 as RawPacket};
 use anyhow::{Result, anyhow};
-use super::proxy::Proxy;
 use std::sync::Arc;
-use mcproto_rs::uuid::UUID4;
+use mcproto_rs::{protocol::{State, RawPacket as RawPacketTrait}, uuid::UUID4, v1_15_2 as proto};
+use proto::{Packet578 as Packet, RawPacket578 as RawPacket};
 
 pub type Streams = Arc<StreamsInner>;
 
@@ -104,7 +104,7 @@ impl StreamsInner {
     pub async fn read_next_packet(&self) -> Result<Option<Packet>> {
         let mut locked_reader = self.reader().await;
         let reader = locked_reader.as_mut()?;
-        if let Some(raw) = reader.read_packet().await? {
+        if let Some(raw) = reader.read_packet::<RawPacket>().await? {
             Ok(Some(raw.deserialize()?))
         } else {
             Ok(None)

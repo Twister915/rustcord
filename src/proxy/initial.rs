@@ -1,6 +1,5 @@
-use mcproto_rs::v1_15_2 as proto;
+use mcproto_rs::{v1_15_2 as proto, types::{Chat, VarInt}, protocol::State};
 use proto::Packet578 as Packet;
-use mcproto_rs::types::{Chat, VarInt};
 
 use crate::proxy::util::Streams;
 use crate::proxy::proxy::Proxy;
@@ -49,7 +48,7 @@ impl InitialUpstreamHandler {
     }
 
     async fn handle_status(self) -> Result<()> {
-        self.streams.set_state(proto::State::Status).await?;
+        self.streams.set_state(State::Status).await?;
         self.proxy.logger.debug(format_args!("serving status to {}", self.remote));
 
         use Packet::{StatusRequest, StatusResponse, StatusPing, StatusPong};
@@ -114,7 +113,7 @@ impl InitialUpstreamHandler {
     async fn handle_login(mut self) -> Result<()> {
         use Packet::{LoginStart, LoginEncryptionRequest, LoginEncryptionResponse, LoginSetCompression, LoginSuccess, LoginDisconnect};
         use proto::{LoginEncryptionRequestSpec, LoginSetCompressionSpec, LoginSuccessSpec, LoginDisconnectSpec};
-        use proto::State::{Login, Play};
+        use State::{Login, Play};
 
         self.streams.set_state(Login).await?;
         self.proxy.logger.debug(format_args!("serving login to {}", self.remote));

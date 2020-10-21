@@ -1,20 +1,17 @@
+use super::util::Streams;
+use super::proxy::Proxy;
+use super::downstream::{DownstreamConnection, DownstreamConnectErr, DownstreamInner};
+use super::auth::UserProperty;
 use std::sync::Arc;
-use crate::proxy::util::Streams;
-use mcproto_rs::uuid::UUID4;
-use std::net::SocketAddr;
-use mcproto_rs::v1_15_2 as proto;
-use proto::{HandshakeSpec, Packet578 as Packet, RawPacket578 as RawPacket, LoginDisconnectSpec, PlayDisconnectSpec, State, PlayServerChatMessageSpec, ChatPosition};
-use mcproto_rs::types::{Chat, VarInt};
-use anyhow::{Result, anyhow};
-use crate::proxy::proxy::Proxy;
-use crate::proxy::downstream::{DownstreamConnection, DownstreamConnectErr, DownstreamInner};
-use mctokio::{TcpReadBridge, TcpWriteBridge};
-use std::sync::atomic::{AtomicBool, Ordering};
-use crate::proxy::auth::UserProperty;
-use tokio::sync::{Mutex, MutexGuard, RwLock};
 use std::collections::HashSet;
 use std::pin::Pin;
-use mcproto_rs::protocol::PacketErr;
+use std::net::SocketAddr;
+use std::sync::atomic::{AtomicBool, Ordering};
+use mcproto_rs::{uuid::UUID4, v1_15_2 as proto, protocol::{State, PacketErr}, types::{Chat, VarInt}};
+use proto::{HandshakeSpec, Packet578 as Packet, RawPacket578 as RawPacket, LoginDisconnectSpec, PlayDisconnectSpec, PlayServerChatMessageSpec, ChatPosition};
+use mctokio::{TcpReadBridge, TcpWriteBridge};
+use tokio::sync::{Mutex, MutexGuard, RwLock};
+use anyhow::{Result, anyhow};
 
 pub type UpstreamConnection = Arc<UpstreamInner>;
 

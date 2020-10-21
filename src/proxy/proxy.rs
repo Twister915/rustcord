@@ -1,16 +1,16 @@
-use crate::proxy::upstream::{UpstreamInner, UpstreamConnection};
+use super::upstream::{UpstreamInner, UpstreamConnection};
+use super::config::Configuration;
+use super::logger::Logger;
+use super::util::{StreamsInner, offline_id_for};
+use super::initial::InitialUpstreamHandler;
+use mcproto_rs::{uuid::UUID4, protocol::State};
+use mctokio::TcpConnection;
+use tokio::sync::Mutex;
+use tokio::net::TcpListener;
 use std::sync::Arc;
 use std::collections::HashMap;
-use mcproto_rs::uuid::UUID4;
-use tokio::sync::Mutex;
-use crate::proxy::config::Configuration;
 use anyhow::{Result, anyhow};
-use crate::proxy::logger::Logger;
-use tokio::net::TcpListener;
-use mctokio::TcpConnection;
-use crate::proxy::util::{StreamsInner, offline_id_for};
-use mcproto_rs::v1_15_2::State;
-use crate::proxy::initial::InitialUpstreamHandler;
+
 use rsa::{PaddingScheme, PublicKey, RSAPrivateKey};
 use mcproto_rs::types::Chat;
 
