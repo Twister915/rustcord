@@ -603,7 +603,7 @@ checksum = "7ffc5c5338469d4d3ea17d269fa8ea3512ad247247c30bd2df69e68309ed0a08"
 [[package]]
 name = "mcproto-rs"
 version = "0.2.0"
-source = "git+https://github.com/Twister915/mcproto-rs?branch=master#aff961ae710016f2b43935048304bf5e37cadb07"
+source = "git+https://github.com/Twister915/mcproto-rs?branch=master#c32e6abbbf06265cff0079de3aaa1cec8d17701d"
 dependencies = [
  "base64",
  "rand",
@@ -614,7 +614,7 @@ dependencies = [
 [[package]]
 name = "mctokio"
 version = "0.1.0"
-source = "git+https://github.com/Twister915/mctokio?branch=master#21ad570b1fc2e4b0f5b56f1cbc91d7c2c0eb9dda"
+source = "git+https://github.com/Twister915/mctokio?branch=master#8847e9bd716de244ea3e3a795f7ef8448a50b0f9"
 dependencies = [
  "aesni",
  "anyhow",
